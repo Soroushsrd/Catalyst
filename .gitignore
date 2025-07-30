@@ -1,0 +1,7 @@
+
+.env
+*.c
+*.s
+Cargo.lock
+/target
+/tests

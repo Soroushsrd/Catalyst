@@ -1,0 +1,45 @@
+a compiler cant do anything on its own. to make use of a compiler, we need a compiler driver
+that calls the preprocessor, compiler, assembler and linker.
+
+Steps:
+1############
+`
+gcc -E -P INPUT_FILE -o PREPROCESSED_FILE
+`
+############
+-E:
+  tells gcc to run only the preprocessor. the preprocessor emits linemarkers indicating
+  original source file and the starting line number withing the source file for each 
+  part of the output.
+
+-P:
+  tells preprocessor to not emit linemarkers; otherwise our lexer and parse wont be able to 
+  process them. 
+
+PREPROCESSED_FILE:
+  by convention, this file should have a ".i" extension
+  
+2############
+compile the preprocessed source file and output and assembly file with .s extension
+
+3############
+`
+gcc ASSEMBLY_FILE -o OUTPUT_FILE
+`
+############
+Assemble and link the assembly file to produce an executable
+
+4##########
+A compiler driver should support these options:
+
+--lex:
+	directs it to run the lexer but stops before parsing
+
+--parse:
+	directs it to run the lexer and parse but stop before assembly generation
+
+--codegen:
+	does everything but stops before code emission
+
+
+
