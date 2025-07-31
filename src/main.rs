@@ -1,4 +1,5 @@
 mod lexer;
+mod parser;
 use std::{fs, io::Result, str::FromStr};
 
 use tracing::info;

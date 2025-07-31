@@ -305,6 +305,9 @@ impl Token {
             line,
         }
     }
+    pub fn token_type(&self) -> &TokenType {
+        &self.type_
+    }
     // pub fn to_string(&self) -> String {
     //     return format!("{} {} {}", self.type_, self.lexeme, self.literal);
     // }
