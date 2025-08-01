@@ -154,6 +154,7 @@ impl Scanner {
     fn get_keyword_or_identifier(&self, text: &str) -> TokenType {
         match text {
             "void" => TokenType::Void,
+            "int" => TokenType::Int,
             "and" => TokenType::And,
             "class" => TokenType::Class,
             "else" => TokenType::Else,
@@ -288,9 +289,9 @@ impl Scanner {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Token {
-    type_: TokenType,
+    pub type_: TokenType,
     lexeme: String,
     literal: String,
     line: usize,
@@ -313,7 +314,7 @@ impl Token {
     // }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum TokenType {
     // single character tokens
     LeftParen,
@@ -345,6 +346,7 @@ pub enum TokenType {
 
     //keywords
     Void,
+    Int,
     And,
     Class,
     Else,
@@ -404,7 +406,7 @@ impl From<TokenType> for String {
             TokenType::Dot => ".".to_string(),
             TokenType::Minus => "-".to_string(),
             TokenType::Plus => "+".to_string(),
-            TokenType::Semicolon => ";".to_string(), // Fix: should be Semicolon
+            TokenType::Semicolon => ";".to_string(),
             TokenType::Slash => "/".to_string(),
             TokenType::Star => "*".to_string(),
             TokenType::Bang => "!".to_string(),
@@ -419,6 +421,7 @@ impl From<TokenType> for String {
             TokenType::String(text) => format!("String: {text}"),
             TokenType::Number(text) => format!("Number: {text}"),
             TokenType::Void => "void".to_string(),
+            TokenType::Int => "int".to_string(),
             TokenType::And => "and".to_string(),
             TokenType::Class => "class".to_string(),
             TokenType::Else => "else".to_string(),
@@ -466,6 +469,7 @@ impl Display for TokenType {
             Self::String(text) => write!(f, "String: {text}"),
             Self::Number(text) => write!(f, "Number: {text}"),
             Self::Void => write!(f, "void"),
+            Self::Int => write!(f, "int"),
             Self::And => write!(f, "and"),
             Self::Class => write!(f, "class"),
             Self::Else => write!(f, "else"),

@@ -4,7 +4,10 @@ use std::{fs, io::Result, str::FromStr};
 
 use tracing::info;
 
-use crate::lexer::{Scanner, Token};
+use crate::{
+    lexer::{Scanner, Token},
+    parser::Parser,
+};
 
 fn main() -> Result<()> {
     let input: Vec<String> = std::env::args().collect();
@@ -38,8 +41,20 @@ fn run_prompt() -> Result<()> {
 fn run(source_code: &str) -> Result<()> {
     let mut scanner = Scanner::new(source_code);
     let tokens: Vec<Token> = scanner.scan_tokens();
-    for token in tokens {
+    println!("***TOKENS***");
+    for token in tokens.iter().cloned() {
         println!("Token: {:?}", token);
+    }
+
+    let mut parser = Parser::new(tokens);
+    match parser.parse() {
+        Ok(ast) => {
+            println!("\n*** AST ***");
+            println!("AST: {:#?}", ast);
+        }
+        Err(e) => {
+            println!("Parse error: {}", e);
+        }
     }
     Ok(())
 }
