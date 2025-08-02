@@ -1,3 +1,4 @@
+mod code_generator;
 mod lexer;
 mod parser;
 use std::{fs, io::Result, str::FromStr};
@@ -5,6 +6,7 @@ use std::{fs, io::Result, str::FromStr};
 use tracing::info;
 
 use crate::{
+    code_generator::AssemblyGenerator,
     lexer::{Scanner, Token},
     parser::Parser,
 };
@@ -42,18 +44,24 @@ fn run(source_code: &str) -> Result<()> {
     let mut scanner = Scanner::new(source_code);
     let tokens: Vec<Token> = scanner.scan_tokens();
     println!("***TOKENS***");
-    for token in tokens.iter().cloned() {
-        println!("Token: {:?}", token);
+    for token in tokens.iter() {
+        println!("Token: {token:?}");
     }
 
     let mut parser = Parser::new(tokens);
     match parser.parse() {
         Ok(ast) => {
             println!("\n*** AST ***");
-            println!("AST: {:#?}", ast);
+            println!("AST: {ast:#?}");
+
+            let mut codegen = AssemblyGenerator::new();
+            codegen.generate_program(&ast);
+            if let Err(e) = codegen.compile_to_file("output.s") {
+                println!("failed to write assembly file {}", e);
+            }
         }
         Err(e) => {
-            println!("Parse error: {}", e);
+            println!("Parse error: {e}");
         }
     }
     Ok(())

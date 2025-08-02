@@ -4,7 +4,7 @@ use crate::lexer::{Token, TokenType};
 /// it contains a single child which is the function
 #[derive(Debug, Clone)]
 pub struct Program {
-    function_def: Function,
+    pub function_def: Function,
 }
 
 /// functions consist of a name (identifier) and a
@@ -12,16 +12,16 @@ pub struct Program {
 /// they're basically strings but different from "strings".
 #[derive(Debug, Clone)]
 pub struct Function {
-    name: Identifier,
-    body: Statement,
-    parameters: Vec<Parameter>,
-    return_type: ReturnType,
+    pub name: Identifier,
+    pub body: Statement,
+    pub parameters: Vec<Parameter>,
+    pub return_type: ReturnType,
 }
 
 /// represents variable names, function names,etc
 #[derive(Debug, Clone)]
 pub struct Identifier {
-    name: String,
+    pub name: String,
 }
 
 #[derive(Debug, Clone)]
@@ -34,7 +34,7 @@ pub enum ReturnType {
 #[derive(Debug, Clone)]
 pub struct Parameter {
     parameter_type: ParameterType,
-    name: Option<Identifier>,
+    pub name: Option<Identifier>,
 }
 
 //WARNING: Could be merged with ReturnType enum
@@ -124,11 +124,11 @@ impl Parser {
         let mut parameters = Vec::with_capacity(5);
 
         if let Some(token) = self.peek() {
-            match &token.token_type() {
-                &TokenType::RightParen => {
+            match *token.token_type() {
+                TokenType::RightParen => {
                     return Ok(parameters);
                 }
-                &TokenType::Void => {
+                TokenType::Void => {
                     self.advance();
                     parameters.push(Parameter {
                         parameter_type: ParameterType::Void,
