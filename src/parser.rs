@@ -59,6 +59,7 @@ pub enum Expression {
     Identifier(String),
     Number(f32),
     BitwiseNot(i32),
+    UnaryMinus(Box<Expression>),
     //TODO:
 }
 
@@ -180,16 +181,30 @@ impl Parser {
     fn parse_expression(&mut self) -> Result<Expression, String> {
         let token = self
             .peek()
-            .ok_or("Unexpected end of input, expected expression")?;
+            .ok_or("Unexpected end of input, expected expression")?
+            .clone();
 
         let expression = match token.token_type() {
-            TokenType::Number(value) => Expression::Number(*value),
-            TokenType::Identifier(name) => Expression::Identifier(name.clone()),
-            TokenType::BitwiseNot(token) => Expression::BitwiseNot(*token),
+            TokenType::Number(value) => {
+                self.advance();
+                Expression::Number(*value)
+            }
+            TokenType::Identifier(name) => {
+                self.advance();
+                Expression::Identifier(name.clone())
+            }
+            TokenType::BitwiseNot(val) => {
+                self.advance();
+                Expression::BitwiseNot(*val)
+            }
+            TokenType::Minus => {
+                self.advance();
+                let expr = self.parse_expression()?;
+                Expression::UnaryMinus(Box::new(expr))
+            }
             _ => return Err(format!("Expected expression:{:?}", token)),
         };
 
-        self.advance();
         Ok(expression)
     }
 

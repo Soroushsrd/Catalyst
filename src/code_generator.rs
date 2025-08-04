@@ -123,9 +123,14 @@ impl AssemblyGenerator {
                 }
             }
             Expression::BitwiseNot(value) => {
-                // Load the value into %rax and apply bitwise NOT
+                // load the value into %rax and apply bitwise NOT
                 self.emit(&format!("    mov ${}, %rax", value));
                 self.emit("    not %rax           # Bitwise NOT operation");
+            }
+            Expression::UnaryMinus(expr) => {
+                self.generate_expression(&expr);
+                //negate the results
+                self.emit("    neg %rax           # Unary minus operation");
             }
             Expression::Unknown => {
                 self.emit("   # Unknown expression");
