@@ -58,6 +58,7 @@ pub enum Expression {
     Unknown,
     Identifier(String),
     Number(f32),
+    BitwiseNot(i32),
     //TODO:
 }
 
@@ -184,7 +185,8 @@ impl Parser {
         let expression = match token.token_type() {
             TokenType::Number(value) => Expression::Number(*value),
             TokenType::Identifier(name) => Expression::Identifier(name.clone()),
-            _ => return Err("Expected expression".to_string()),
+            TokenType::BitwiseNot(token) => Expression::BitwiseNot(*token),
+            _ => return Err(format!("Expected expression:{:?}", token)),
         };
 
         self.advance();

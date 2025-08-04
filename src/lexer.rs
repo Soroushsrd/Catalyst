@@ -123,6 +123,7 @@ impl Scanner {
                 self.line += 1;
             }
             '"' => self.handle_string(),
+            '~' => self.handle_bitwise_not(),
             _ => {
                 if c.is_ascii_digit() {
                     self.handle_number();
@@ -134,6 +135,20 @@ impl Scanner {
                 }
             }
         }
+    }
+
+    /// starts when a ~ has been captured
+    /// after which a number should be present.
+    /// it moves forward until it reaches end of the number
+    /// used to handle ~ sign before bitwise ops
+    fn handle_bitwise_not(&mut self) {
+        while self.peek().is_ascii_digit() {
+            self.advance();
+        }
+
+        // skipping first char which is ~
+        let number: String = self.chars[self.start + 1..self.current].iter().collect();
+        self.add_token(TokenType::BitwiseNot(number.parse::<i32>().unwrap_or(0)));
     }
 
     /// used to parse out identifiers
@@ -343,6 +358,7 @@ pub enum TokenType {
     Identifier(String),
     String(String),
     Number(f32),
+    BitwiseNot(i32),
 
     //keywords
     Void,
@@ -420,6 +436,7 @@ impl From<TokenType> for String {
             TokenType::Identifier(text) => format!("Identifier: {text}"),
             TokenType::String(text) => format!("String: {text}"),
             TokenType::Number(text) => format!("Number: {text}"),
+            TokenType::BitwiseNot(text) => format!("~{text}"),
             TokenType::Void => "void".to_string(),
             TokenType::Int => "int".to_string(),
             TokenType::And => "and".to_string(),
@@ -468,6 +485,7 @@ impl Display for TokenType {
             Self::Identifier(text) => write!(f, "Identifier: {text}"),
             Self::String(text) => write!(f, "String: {text}"),
             Self::Number(text) => write!(f, "Number: {text}"),
+            Self::BitwiseNot(number) => write!(f, "~{number}"),
             Self::Void => write!(f, "void"),
             Self::Int => write!(f, "int"),
             Self::And => write!(f, "and"),

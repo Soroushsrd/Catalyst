@@ -4,7 +4,6 @@ use std::{collections::HashMap, fs::File, io};
 
 pub struct AssemblyGenerator {
     output: Vec<String>,
-    label_counter: usize,
     stack_offset: i32,
     ///symbol -> stack offset
     symbols: HashMap<String, i32>,
@@ -14,7 +13,6 @@ impl AssemblyGenerator {
     pub fn new() -> Self {
         Self {
             output: Vec::new(),
-            label_counter: 0,
             stack_offset: 0,
             symbols: HashMap::new(),
         }
@@ -124,6 +122,11 @@ impl AssemblyGenerator {
                     self.emit("   mov $0, %rax");
                 }
             }
+            Expression::BitwiseNot(value) => {
+                // Load the value into %rax and apply bitwise NOT
+                self.emit(&format!("    mov ${}, %rax", value));
+                self.emit("    not %rax           # Bitwise NOT operation");
+            }
             Expression::Unknown => {
                 self.emit("   # Unknown expression");
                 self.emit("   mov $0, %rax");
@@ -147,12 +150,5 @@ impl AssemblyGenerator {
         self.emit("    mov %rbp, %rsp");
         self.emit("    pop %rbp");
         self.emit("    ret");
-    }
-    /// formats the label as .L{label_counter} and
-    /// returns the label
-    fn next_label(&mut self) -> String {
-        let label = format!(".L{}", self.label_counter);
-        self.label_counter += 1;
-        label
     }
 }
