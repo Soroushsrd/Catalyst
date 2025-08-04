@@ -1,7 +1,11 @@
 mod code_generator;
 mod lexer;
 mod parser;
-use std::{fs, io::Result, str::FromStr};
+use std::{
+    fs,
+    io::{ErrorKind, Result},
+    str::FromStr,
+};
 
 use tracing::info;
 
@@ -11,28 +15,41 @@ use crate::{
     parser::Parser,
 };
 
+//WARNING: Fix all string allocations
 fn main() -> Result<()> {
     let input: Vec<String> = std::env::args().collect();
+    let file_name = std::path::PathBuf::from_str(&input[1]).expect("failed to create a pathbuf");
+    let file_name = match file_name
+        .file_name()
+        .unwrap()
+        .to_str()
+        .expect("failed to create file name")
+        .split_once('.')
+    {
+        Some((filename, _ext)) => filename,
+        None => "output",
+    };
+
     match input.len() {
-        2 => run_file(&input[1])?,
-        1 => run_prompt()?,
+        2 => run_file(&input[1], file_name)?,
+        1 => run_prompt(file_name)?,
         _ => info!("Usage: rlox [script]"),
     }
     Ok(())
 }
 
-fn run_file(path: &str) -> Result<()> {
+fn run_file(path: &str, file_name: &str) -> Result<()> {
     let bytes_str = fs::read_to_string(std::path::PathBuf::from_str(path).unwrap())?;
-    run(&bytes_str)?;
+    run(&bytes_str, file_name)?;
     Ok(())
 }
 
-fn run_prompt() -> Result<()> {
+fn run_prompt(file_name: &str) -> Result<()> {
     let mut buf = String::new();
     loop {
         let n = std::io::stdin().read_line(&mut buf)?;
         if n > 0 {
-            run(&buf)?;
+            run(&buf, file_name)?;
         } else {
             break;
         }
@@ -40,7 +57,37 @@ fn run_prompt() -> Result<()> {
     Ok(())
 }
 
-fn run(source_code: &str) -> Result<()> {
+fn compile_to_exe(assembly_file: &str, output_name: &str) -> Result<()> {
+    // let output_dir = std::path::Path::new("tests");
+    // if !output_dir.exists() {
+    //     std::fs::create_dir_all(output_dir)?;
+    // }
+    //
+    // let output_path = format!("tests/{}", output_name);
+
+    let assemble = std::process::Command::new("as")
+        .args(&["-64", assembly_file, "-o", "temp.o"])
+        .status()?;
+
+    if !assemble.success() {
+        println!("failed to assemble");
+        return Err(ErrorKind::Other.into());
+    }
+
+    let link = std::process::Command::new("ld")
+        .args(&["temp.o", "-o", &output_name])
+        .status()?;
+
+    if !link.success() {
+        println!("failed to link");
+        return Err(ErrorKind::Other.into());
+    }
+
+    std::fs::remove_file("temp.o")?;
+    println!("Compilation successful. output file {output_name}");
+    Ok(())
+}
+fn run(source_code: &str, file_name: &str) -> Result<()> {
     let mut scanner = Scanner::new(source_code);
     let tokens: Vec<Token> = scanner.scan_tokens();
     println!("***TOKENS***");
@@ -56,9 +103,11 @@ fn run(source_code: &str) -> Result<()> {
 
             let mut codegen = AssemblyGenerator::new();
             codegen.generate_program(&ast);
-            if let Err(e) = codegen.compile_to_file("output.s") {
+            let assembly_file_name = format!("{}.s", file_name);
+            if let Err(e) = codegen.compile_to_file(&assembly_file_name) {
                 println!("failed to write assembly file {}", e);
             }
+            compile_to_exe(&assembly_file_name, file_name)?;
         }
         Err(e) => {
             println!("Parse error: {e}");
