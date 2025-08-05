@@ -60,6 +60,7 @@ pub enum Expression {
     Number(f32),
     BitwiseNot(i32),
     UnaryMinus(Box<Expression>),
+    LogicalNot(Box<Expression>),
     //TODO:
 }
 
@@ -201,6 +202,12 @@ impl Parser {
                 self.advance();
                 let expr = self.parse_expression()?;
                 Expression::UnaryMinus(Box::new(expr))
+            }
+
+            TokenType::Bang => {
+                self.advance();
+                let expr = self.parse_expression()?;
+                Expression::LogicalNot(Box::new(expr))
             }
             _ => return Err(format!("Expected expression:{:?}", token)),
         };

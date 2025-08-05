@@ -359,7 +359,6 @@ pub enum TokenType {
     String(String),
     Number(f32),
     BitwiseNot(i32),
-
     //keywords
     Void,
     Int,

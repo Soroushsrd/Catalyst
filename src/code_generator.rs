@@ -132,6 +132,12 @@ impl AssemblyGenerator {
                 //negate the results
                 self.emit("    neg %rax           # Unary minus operation");
             }
+            Expression::LogicalNot(expr) => {
+                self.generate_expression(&expr);
+                self.emit("    test %rax, %rax    # Test if value is zero");
+                self.emit("    setz %al           # Set AL to 1 if zero, 0 if non-zero");
+                self.emit("    movzbl %al, %eax   # Zero-extend AL to EAX");
+            }
             Expression::Unknown => {
                 self.emit("   # Unknown expression");
                 self.emit("   mov $0, %rax");
