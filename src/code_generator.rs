@@ -123,9 +123,8 @@ impl AssemblyGenerator {
                 }
             }
             Expression::BitwiseNot(value) => {
-                // load the value into %rax and apply bitwise NOT
-                self.emit(&format!("    mov ${}, %rax", value));
-                self.emit("    not %rax           # Bitwise NOT operation");
+                self.generate_expression(&value);
+                self.emit("    not %rax        #Bitwise Not op");
             }
             Expression::UnaryMinus(expr) => {
                 self.generate_expression(&expr);
@@ -137,6 +136,39 @@ impl AssemblyGenerator {
                 self.emit("    test %rax, %rax    # Test if value is zero");
                 self.emit("    setz %al           # Set AL to 1 if zero, 0 if non-zero");
                 self.emit("    movzbl %al, %eax   # Zero-extend AL to EAX");
+            }
+            Expression::Binary {
+                left,
+                operator,
+                right,
+            } => {
+                self.generate_expression(&left);
+                self.emit("    push %rax       # Save left operatnd");
+                self.generate_expression(&right);
+                self.emit("    pop %rcx        # Restore left operand to %rcx");
+
+                match operator {
+                    BinaryOperator::Add => {
+                        self.emit("    add %rcx, %rax");
+                    }
+                    BinaryOperator::Subtract => {
+                        self.emit("    sub %rax, %rcx");
+                        self.emit("    mov %rcx, %rax");
+                    }
+                    BinaryOperator::Multiply => {
+                        self.emit("    imul %rcx, %rax    # Multiply: left * right");
+                    }
+                    BinaryOperator::Divide => {
+                        // for division: dividend in %rax, divisor in register
+                        //we need: %rax = %rcx / %rax  (left / right)
+                        self.emit("    mov %rax, %rbx     # Save right operand (divisor) in %rbx");
+                        self.emit("    mov %rcx, %rax     # Move left operand (dividend) to %rax");
+                        self.emit("    cqo                # Sign extend %rax to %rdx:%rax");
+                        self.emit(
+                            "    idiv %rbx          # Divide %rdx:%rax by %rbx, result in %rax",
+                        );
+                    }
+                }
             }
             Expression::Unknown => {
                 self.emit("   # Unknown expression");

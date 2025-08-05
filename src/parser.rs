@@ -58,12 +58,24 @@ pub enum Expression {
     Unknown,
     Identifier(String),
     Number(f32),
-    BitwiseNot(i32),
+    BitwiseNot(Box<Expression>),
     UnaryMinus(Box<Expression>),
     LogicalNot(Box<Expression>),
+    Binary {
+        left: Box<Expression>,
+        operator: BinaryOperator,
+        right: Box<Expression>,
+    },
     //TODO:
 }
 
+#[derive(Debug, Clone)]
+pub enum BinaryOperator {
+    Add,
+    Subtract,
+    Multiply,
+    Divide,
+}
 #[derive(Debug, Clone)]
 pub struct Parser {
     tokens: Vec<Token>,
@@ -177,37 +189,77 @@ impl Parser {
         )?;
         Ok(Statement::Return(expr))
     }
-    /// based on token type defined in lexer module, parses the token
-    /// then matches it agains expressions and advances one token forward
+
     fn parse_expression(&mut self) -> Result<Expression, String> {
+        self.parse_binary_expression(0)
+    }
+    fn parse_binary_expression(&mut self, min_precedence: u8) -> Result<Expression, String> {
+        let mut left = self.parse_unary_expression()?;
+
+        while let Some(token) = self.peek() {
+            let operator = match token.token_type() {
+                TokenType::Plus => BinaryOperator::Add,
+                TokenType::Minus => BinaryOperator::Subtract,
+                TokenType::Star => BinaryOperator::Multiply,
+                TokenType::Slash => BinaryOperator::Divide,
+                _ => break,
+            };
+
+            let precendence = self.get_precendece(&operator);
+            if precendence < min_precedence {
+                break;
+            }
+            self.advance();
+
+            let right = self.parse_binary_expression(precendence + 1)?;
+            left = Expression::Binary {
+                left: Box::new(left),
+                operator,
+                right: Box::new(right),
+            };
+        }
+        Ok(left)
+    }
+    /// parses unary expressions like ~, !, -
+    fn parse_unary_expression(&mut self) -> Result<Expression, String> {
         let token = self
             .peek()
-            .ok_or("Unexpected end of input, expected expression")?
+            .ok_or("unexpected end of line, expected operation.")?
             .clone();
 
-        let expression = match token.token_type() {
-            TokenType::Number(value) => {
-                self.advance();
-                Expression::Number(*value)
-            }
-            TokenType::Identifier(name) => {
-                self.advance();
-                Expression::Identifier(name.clone())
-            }
-            TokenType::BitwiseNot(val) => {
-                self.advance();
-                Expression::BitwiseNot(*val)
-            }
+        match token.token_type() {
             TokenType::Minus => {
                 self.advance();
-                let expr = self.parse_expression()?;
-                Expression::UnaryMinus(Box::new(expr))
+                let expr = self.parse_unary_expression()?;
+                Ok(Expression::UnaryMinus(Box::new(expr)))
             }
-
             TokenType::Bang => {
                 self.advance();
+                let expr = self.parse_unary_expression()?;
+                Ok(Expression::LogicalNot(Box::new(expr)))
+            }
+            TokenType::BitwiseNot => {
+                self.advance();
+                let expr = self.parse_unary_expression()?;
+                Ok(Expression::BitwiseNot(Box::new(expr)))
+            }
+            _ => self.parse_primary_expression(),
+        }
+    }
+    /// based on token type defined in lexer module, parses the primary tokens
+    /// then matches it agains expressions and advances one token forward
+    fn parse_primary_expression(&mut self) -> Result<Expression, String> {
+        let token = self
+            .advance()
+            .ok_or("unexpected end of line, expected primary operation.")?;
+
+        let expression = match token.token_type() {
+            TokenType::Number(value) => Expression::Number(*value),
+            TokenType::Identifier(name) => Expression::Identifier(name.clone()),
+            TokenType::LeftParen => {
                 let expr = self.parse_expression()?;
-                Expression::LogicalNot(Box::new(expr))
+                self.consume_type(&TokenType::RightParen, "Expected ')' after expression")?;
+                expr
             }
             _ => return Err(format!("Expected expression:{:?}", token)),
         };
@@ -215,6 +267,12 @@ impl Parser {
         Ok(expression)
     }
 
+    fn get_precendece(&self, operator: &BinaryOperator) -> u8 {
+        match operator {
+            BinaryOperator::Add | BinaryOperator::Subtract => 1,
+            BinaryOperator::Multiply | BinaryOperator::Divide => 2,
+        }
+    }
     /// returns a ref to the current token
     fn peek(&self) -> Option<&Token> {
         self.tokens.get(self.current)
