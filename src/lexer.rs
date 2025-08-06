@@ -81,6 +81,25 @@ impl Scanner {
                 };
                 self.add_token(token_type);
             }
+            '&' => {
+                let token_type = if self.match_char('&') {
+                    TokenType::And
+                } else {
+                    report(self.line, "Unexpected Character");
+                    TokenType::Error(format!("Unexpected character: {c}"))
+                };
+                self.add_token(token_type);
+            }
+            '|' => {
+                let token_type = if self.match_char('|') {
+                    TokenType::Or
+                } else {
+                    report(self.line, "Unexpected Character");
+                    TokenType::Error(format!("Unexpected character: {c}"))
+                };
+                self.add_token(token_type);
+            }
+
             '=' => {
                 let token_type = if self.match_char('=') {
                     TokenType::EqualEqual
@@ -156,7 +175,7 @@ impl Scanner {
         match text {
             "void" => TokenType::Void,
             "int" => TokenType::Int,
-            "and" => TokenType::And,
+            "&" => TokenType::And,
             "class" => TokenType::Class,
             "else" => TokenType::Else,
             "false" => TokenType::False,
@@ -164,7 +183,7 @@ impl Scanner {
             "fun" => TokenType::Fun,
             "if" => TokenType::If,
             "nil" => TokenType::Nil,
-            "or" => TokenType::Or,
+            "|" => TokenType::Or,
             "print" => TokenType::Print,
             "return" => TokenType::Return,
             "super" => TokenType::Super,
@@ -424,7 +443,7 @@ impl From<TokenType> for String {
             TokenType::BitwiseNot => format!("~"),
             TokenType::Void => "void".to_string(),
             TokenType::Int => "int".to_string(),
-            TokenType::And => "and".to_string(),
+            TokenType::And => "&".to_string(),
             TokenType::Class => "class".to_string(),
             TokenType::Else => "else".to_string(),
             TokenType::False => "false".to_string(),
@@ -432,7 +451,7 @@ impl From<TokenType> for String {
             TokenType::If => "if".to_string(),
             TokenType::For => "for".to_string(),
             TokenType::Nil => "nil".to_string(),
-            TokenType::Or => "or".to_string(),
+            TokenType::Or => "|".to_string(),
             TokenType::Print => "print".to_string(),
             TokenType::Return => "return".to_string(),
             TokenType::This => "this".to_string(),
@@ -473,7 +492,7 @@ impl Display for TokenType {
             Self::BitwiseNot => write!(f, "~"),
             Self::Void => write!(f, "void"),
             Self::Int => write!(f, "int"),
-            Self::And => write!(f, "and"),
+            Self::And => write!(f, "&"),
             Self::Class => write!(f, "class"),
             Self::Else => write!(f, "else"),
             Self::False => write!(f, "false"),
@@ -481,7 +500,7 @@ impl Display for TokenType {
             Self::If => write!(f, "if"),
             Self::For => write!(f, "for"),
             Self::Nil => write!(f, "Nil"),
-            Self::Or => write!(f, "or"),
+            Self::Or => write!(f, "|"),
             Self::Print => write!(f, "print"),
             Self::Return => write!(f, "return"),
             Self::This => write!(f, "this"),

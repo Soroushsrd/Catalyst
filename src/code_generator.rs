@@ -168,6 +168,70 @@ impl AssemblyGenerator {
                             "    idiv %rbx          # Divide %rdx:%rax by %rbx, result in %rax",
                         );
                     }
+                    BinaryOperator::Or => {
+                        self.generate_expression(&left);
+                        self.emit("    test %rax, %rax    # Test left operand");
+
+                        // Create unique labels for this OR operation
+                        let true_label = format!("or_true_{}", self.output.len());
+                        let end_label = format!("or_end_{}", self.output.len());
+                        // if left is true (non-zero), jump to true_label
+                        self.emit(&format!(
+                            "    jnz {}         # Jump if left is true",
+                            true_label
+                        ));
+
+                        // left is false, evaluate right part
+                        self.generate_expression(&right);
+                        self.emit("    test %rax, %rax    # Test right operand");
+                        self.emit(&format!(
+                            "    jnz {}         # Jump if right is true",
+                            true_label
+                        ));
+
+                        // if both of them are false, result is 0
+                        self.emit("    mov $0, %rax       # Both operands false");
+                        self.emit(&format!("    jmp {}         # Jump to end", end_label));
+
+                        // true case-> result is 1
+                        self.emit(&format!("{}:", true_label));
+                        self.emit("    mov $1, %rax       # Result is true");
+
+                        self.emit(&format!("{}:", end_label));
+                    }
+                    BinaryOperator::And => {
+                        // Generate left operand
+                        self.generate_expression(&left);
+                        self.emit("    test %rax, %rax    # Test left operand");
+
+                        // TODO:labesl should be unique, for now im using output length
+                        let false_label = format!("and_false_{}", self.output.len());
+                        let end_label = format!("and_end_{}", self.output.len());
+
+                        // left is false (0), jump to false_label
+                        self.emit(&format!(
+                            "    jz {}          # Jump if left is false",
+                            false_label
+                        ));
+
+                        // left is true, evaluate right operand
+                        self.generate_expression(&right);
+                        self.emit("    test %rax, %rax    # Test right operand");
+                        self.emit(&format!(
+                            "    jz {}          # Jump if right is false",
+                            false_label
+                        ));
+
+                        // both are true, result is 1
+                        self.emit("    mov $1, %rax       # Both operands true");
+                        self.emit(&format!("    jmp {}         # Jump to end", end_label));
+
+                        // false case-> result is 0
+                        self.emit(&format!("{}:", false_label));
+                        self.emit("    mov $0, %rax       # Result is false");
+
+                        self.emit(&format!("{}:", end_label));
+                    }
                 }
             }
             Expression::Unknown => {

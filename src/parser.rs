@@ -75,6 +75,8 @@ pub enum BinaryOperator {
     Subtract,
     Multiply,
     Divide,
+    And,
+    Or,
 }
 #[derive(Debug, Clone)]
 pub struct Parser {
@@ -202,6 +204,8 @@ impl Parser {
                 TokenType::Minus => BinaryOperator::Subtract,
                 TokenType::Star => BinaryOperator::Multiply,
                 TokenType::Slash => BinaryOperator::Divide,
+                TokenType::And => BinaryOperator::And,
+                TokenType::Or => BinaryOperator::Or,
                 _ => break,
             };
 
@@ -269,8 +273,10 @@ impl Parser {
 
     fn get_precendece(&self, operator: &BinaryOperator) -> u8 {
         match operator {
-            BinaryOperator::Add | BinaryOperator::Subtract => 1,
-            BinaryOperator::Multiply | BinaryOperator::Divide => 2,
+            BinaryOperator::Or => 1,
+            BinaryOperator::And => 2,
+            BinaryOperator::Add | BinaryOperator::Subtract => 3,
+            BinaryOperator::Multiply | BinaryOperator::Divide => 4,
         }
     }
     /// returns a ref to the current token

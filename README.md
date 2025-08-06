@@ -42,7 +42,7 @@ A simple compiler written in Rust that translates C language into x86-64 assembl
 - [ ] **Conditional statements** (`if`/`else`)
 - [ ] **Loops** (`while`, `for`)
 - [ ] **Comparison operators** (`==`, `!=`, `<`, `>`, `<=`, `>=`)
-- [ ] **Logical operators** (`&&`, `||`)
+- [x] **Logical operators** (`&&`, `||`)
 
 ### Advanced Features
 - [ ] **Arrays and indexing**
