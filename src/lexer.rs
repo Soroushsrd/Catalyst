@@ -440,7 +440,7 @@ impl From<TokenType> for String {
             TokenType::Identifier(text) => format!("Identifier: {text}"),
             TokenType::String(text) => format!("String: {text}"),
             TokenType::Number(text) => format!("Number: {text}"),
-            TokenType::BitwiseNot => format!("~"),
+            TokenType::BitwiseNot => "~".to_string(),
             TokenType::Void => "void".to_string(),
             TokenType::Int => "int".to_string(),
             TokenType::And => "&".to_string(),

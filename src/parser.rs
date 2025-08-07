@@ -15,6 +15,7 @@ pub struct Function {
     pub name: Identifier,
     pub body: Statement,
     pub parameters: Vec<Parameter>,
+    #[allow(dead_code)]
     pub return_type: ReturnType,
 }
 
@@ -33,6 +34,7 @@ pub enum ReturnType {
 
 #[derive(Debug, Clone)]
 pub struct Parameter {
+    #[allow(dead_code)]
     parameter_type: ParameterType,
     pub name: Option<Identifier>,
 }
@@ -41,6 +43,7 @@ pub struct Parameter {
 #[derive(Debug, Clone)]
 pub enum ParameterType {
     Void,
+    #[allow(dead_code)]
     Int,
     //TODO:
 }
@@ -75,6 +78,8 @@ pub enum BinaryOperator {
     Subtract,
     Multiply,
     Divide,
+    Equals,
+    NotEquals,
     And,
     Or,
 }
@@ -206,6 +211,8 @@ impl Parser {
                 TokenType::Slash => BinaryOperator::Divide,
                 TokenType::And => BinaryOperator::And,
                 TokenType::Or => BinaryOperator::Or,
+                TokenType::BangEqual => BinaryOperator::NotEquals,
+                TokenType::EqualEqual => BinaryOperator::Equals,
                 _ => break,
             };
 
@@ -265,7 +272,7 @@ impl Parser {
                 self.consume_type(&TokenType::RightParen, "Expected ')' after expression")?;
                 expr
             }
-            _ => return Err(format!("Expected expression:{:?}", token)),
+            _ => return Err(format!("Expected expression:{token:?}")),
         };
 
         Ok(expression)
@@ -275,8 +282,10 @@ impl Parser {
         match operator {
             BinaryOperator::Or => 1,
             BinaryOperator::And => 2,
-            BinaryOperator::Add | BinaryOperator::Subtract => 3,
-            BinaryOperator::Multiply | BinaryOperator::Divide => 4,
+            BinaryOperator::Equals => 3,
+            BinaryOperator::NotEquals => 4,
+            BinaryOperator::Add | BinaryOperator::Subtract => 5,
+            BinaryOperator::Multiply | BinaryOperator::Divide => 6,
         }
     }
     /// returns a ref to the current token

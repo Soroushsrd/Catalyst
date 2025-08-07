@@ -22,7 +22,7 @@ impl AssemblyGenerator {
     pub fn compile_to_file(&self, filename: &str) -> io::Result<()> {
         let mut file = File::create(filename)?;
         for line in &self.output {
-            writeln!(file, "{}", line)?;
+            writeln!(file, "{line}")?;
         }
         Ok(())
     }
@@ -60,14 +60,14 @@ impl AssemblyGenerator {
         self.generate_statement(&function.body);
 
         //TODO: control flow analysis
-        if !self.last_statement_is_return(&function.body) {
+        if !last_statement_is_return(&function.body) {
             self.emit_function_epilogue();
         }
     }
     fn generate_parameter(&mut self, parameter: &[Parameter]) {
         // since we are using x86-64 conventions, we can assume that
         // first 6 ints are gonna be stored in these registers:
-        let register = vec!["%rdi", "%rsi", "%rdx", "%rcx", "%r8", "%r9"];
+        let register = ["%rdi", "%rsi", "%rdx", "%rcx", "%r8", "%r9"];
 
         for (i, param) in parameter.iter().enumerate() {
             if let Some(name) = &param.name {
@@ -115,24 +115,24 @@ impl AssemblyGenerator {
                 // should first lookup the value in symbol table
                 if let Some(offset) = self.symbols.get(name) {
                     // then load it into rax
-                    self.emit(&format!("   mov {}(%rbp), %rax", offset));
+                    self.emit(&format!("   mov {offset}(%rbp), %rax"));
                 } else {
                     // undefied
-                    self.emit(&format!("   # Error: undefined variable '{}'", name));
+                    self.emit(&format!("   # Error: undefined variable '{name}'"));
                     self.emit("   mov $0, %rax");
                 }
             }
             Expression::BitwiseNot(value) => {
-                self.generate_expression(&value);
+                self.generate_expression(value);
                 self.emit("    not %rax        #Bitwise Not op");
             }
             Expression::UnaryMinus(expr) => {
-                self.generate_expression(&expr);
+                self.generate_expression(expr);
                 //negate the results
                 self.emit("    neg %rax           # Unary minus operation");
             }
             Expression::LogicalNot(expr) => {
-                self.generate_expression(&expr);
+                self.generate_expression(expr);
                 self.emit("    test %rax, %rax    # Test if value is zero");
                 self.emit("    setz %al           # Set AL to 1 if zero, 0 if non-zero");
                 self.emit("    movzbl %al, %eax   # Zero-extend AL to EAX");
@@ -142,9 +142,9 @@ impl AssemblyGenerator {
                 operator,
                 right,
             } => {
-                self.generate_expression(&left);
+                self.generate_expression(left);
                 self.emit("    push %rax       # Save left operatnd");
-                self.generate_expression(&right);
+                self.generate_expression(right);
                 self.emit("    pop %rcx        # Restore left operand to %rcx");
 
                 match operator {
@@ -169,7 +169,7 @@ impl AssemblyGenerator {
                         );
                     }
                     BinaryOperator::Or => {
-                        self.generate_expression(&left);
+                        self.generate_expression(left);
                         self.emit("    test %rax, %rax    # Test left operand");
 
                         // Create unique labels for this OR operation
@@ -177,31 +177,29 @@ impl AssemblyGenerator {
                         let end_label = format!("or_end_{}", self.output.len());
                         // if left is true (non-zero), jump to true_label
                         self.emit(&format!(
-                            "    jnz {}         # Jump if left is true",
-                            true_label
+                            "    jnz {true_label}         # Jump if left is true"
                         ));
 
                         // left is false, evaluate right part
-                        self.generate_expression(&right);
+                        self.generate_expression(right);
                         self.emit("    test %rax, %rax    # Test right operand");
                         self.emit(&format!(
-                            "    jnz {}         # Jump if right is true",
-                            true_label
+                            "    jnz {true_label}         # Jump if right is true"
                         ));
 
                         // if both of them are false, result is 0
                         self.emit("    mov $0, %rax       # Both operands false");
-                        self.emit(&format!("    jmp {}         # Jump to end", end_label));
+                        self.emit(&format!("    jmp {end_label}         # Jump to end"));
 
                         // true case-> result is 1
-                        self.emit(&format!("{}:", true_label));
+                        self.emit(&format!("{true_label}:"));
                         self.emit("    mov $1, %rax       # Result is true");
 
-                        self.emit(&format!("{}:", end_label));
+                        self.emit(&format!("{end_label}:"));
                     }
                     BinaryOperator::And => {
                         // Generate left operand
-                        self.generate_expression(&left);
+                        self.generate_expression(left);
                         self.emit("    test %rax, %rax    # Test left operand");
 
                         // TODO:labesl should be unique, for now im using output length
@@ -210,27 +208,62 @@ impl AssemblyGenerator {
 
                         // left is false (0), jump to false_label
                         self.emit(&format!(
-                            "    jz {}          # Jump if left is false",
-                            false_label
+                            "    jz {false_label}          # Jump if left is false"
                         ));
 
                         // left is true, evaluate right operand
-                        self.generate_expression(&right);
+                        self.generate_expression(right);
                         self.emit("    test %rax, %rax    # Test right operand");
                         self.emit(&format!(
-                            "    jz {}          # Jump if right is false",
-                            false_label
+                            "    jz {false_label}          # Jump if right is false"
                         ));
 
                         // both are true, result is 1
                         self.emit("    mov $1, %rax       # Both operands true");
-                        self.emit(&format!("    jmp {}         # Jump to end", end_label));
+                        self.emit(&format!("    jmp {end_label}         # Jump to end"));
 
                         // false case-> result is 0
-                        self.emit(&format!("{}:", false_label));
+                        self.emit(&format!("{false_label}:"));
                         self.emit("    mov $0, %rax       # Result is false");
 
-                        self.emit(&format!("{}:", end_label));
+                        self.emit(&format!("{end_label}:"));
+                    }
+                    BinaryOperator::Equals => {
+                        self.emit("    cmp %rax, %rcx     # Compare left and right");
+
+                        let true_label = format!("eq_true_{}", self.output.len());
+                        let end_label = format!("eq_end_{}", self.output.len());
+
+                        // jump to true_label if the values are equal (zero flag set)
+                        self.emit(&format!("    je {true_label}        # Jump if equal"));
+
+                        // if values are not equal, result is 0
+                        self.emit("    mov $0, %rax       # Result is false (not equal)");
+                        self.emit(&format!("    jmp {end_label}        # Jump to end"));
+
+                        // eq case -> result is 1
+                        self.emit(&format!("{true_label}:"));
+                        self.emit("    mov $1, %rax       # Result is true (equal)");
+
+                        self.emit(&format!("{end_label}:"));
+                    }
+                    BinaryOperator::NotEquals => {
+                        self.emit("    cmp %rax, %rcx     # Compare left and right");
+
+                        let true_label = format!("neq_true_{}", self.output.len());
+                        let end_label = format!("neq_end_{}", self.output.len());
+
+                        self.emit(&format!("    jne {true_label}       # Jump if not equal"));
+
+                        // values are equal, result is 0
+                        self.emit("    mov $0, %rax       # Result is false (equal)");
+                        self.emit(&format!("    jmp {end_label}        # Jump to end"));
+
+                        // not equal case -> result is 1
+                        self.emit(&format!("{true_label}:"));
+                        self.emit("    mov $1, %rax       # Result is true (not equal)");
+
+                        self.emit(&format!("{end_label}:"));
                     }
                 }
             }
@@ -244,18 +277,19 @@ impl AssemblyGenerator {
     fn emit(&mut self, instruction: &str) {
         self.output.push(instruction.to_string());
     }
-    fn last_statement_is_return(&self, statement: &Statement) -> bool {
-        match statement {
-            Statement::Block(statements) => statements
-                .last()
-                .map(|stmt| self.last_statement_is_return(stmt))
-                .unwrap_or(false),
-            Statement::Return(_) => true,
-        }
-    }
     fn emit_function_epilogue(&mut self) {
         self.emit("    mov %rbp, %rsp");
         self.emit("    pop %rbp");
         self.emit("    ret");
+    }
+}
+
+fn last_statement_is_return(statement: &Statement) -> bool {
+    match statement {
+        Statement::Block(statements) => statements
+            .last()
+            .map(last_statement_is_return)
+            .unwrap_or(false),
+        Statement::Return(_) => true,
     }
 }

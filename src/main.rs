@@ -66,7 +66,7 @@ fn compile_to_exe(assembly_file: &str, output_name: &str) -> Result<()> {
     // let output_path = format!("tests/{}", output_name);
 
     let assemble = std::process::Command::new("as")
-        .args(&["-64", assembly_file, "-o", "temp.o"])
+        .args(["-64", assembly_file, "-o", "temp.o"])
         .status()?;
 
     if !assemble.success() {
@@ -75,7 +75,7 @@ fn compile_to_exe(assembly_file: &str, output_name: &str) -> Result<()> {
     }
 
     let link = std::process::Command::new("ld")
-        .args(&["temp.o", "-o", &output_name])
+        .args(["temp.o", "-o", output_name])
         .status()?;
 
     if !link.success() {
@@ -103,9 +103,9 @@ fn run(source_code: &str, file_name: &str) -> Result<()> {
 
             let mut codegen = AssemblyGenerator::new();
             codegen.generate_program(&ast);
-            let assembly_file_name = format!("{}.s", file_name);
+            let assembly_file_name = format!("{file_name}.s");
             if let Err(e) = codegen.compile_to_file(&assembly_file_name) {
-                println!("failed to write assembly file {}", e);
+                println!("failed to write assembly file {e}");
             }
             compile_to_exe(&assembly_file_name, file_name)?;
         }
