@@ -1,5 +1,4 @@
 
-stage*
 .env
 *.s
 Cargo.lock
