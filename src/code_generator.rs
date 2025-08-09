@@ -265,6 +265,44 @@ impl AssemblyGenerator {
 
                         self.emit(&format!("{end_label}:"));
                     }
+                    BinaryOperator::Greater => {
+                        self.emit("    cmp %rax, %rcx     # Compare left and right");
+
+                        let true_label = format!("gt_true_{}", self.output.len());
+                        let end_label = format!("gt_end_{}", self.output.len());
+
+                        self.emit(&format!("    jg {true_label}        # Jump if greater"));
+
+                        // if left is not greater than right, result is 0
+                        self.emit("    mov $0, %rax       # Result is false (not greater)");
+                        self.emit(&format!("    jmp {end_label}        # Jump to end"));
+
+                        // greater case -> result is 1
+                        self.emit(&format!("{true_label}:"));
+                        self.emit("    mov $1, %rax       # Result is true (greater)");
+
+                        self.emit(&format!("{end_label}:"));
+                    }
+                    BinaryOperator::GreaterEqual => {
+                        self.emit("    cmp %rax, %rcx     # Compare left and right");
+
+                        let true_label = format!("ge_true_{}", self.output.len());
+                        let end_label = format!("ge_end_{}", self.output.len());
+
+                        self.emit(&format!(
+                            "    jge {true_label}       # Jump if greater or equal"
+                        ));
+
+                        // if left is not greater or equal to right, result is 0
+                        self.emit("    mov $0, %rax       # Result is false (not greater/equal)");
+                        self.emit(&format!("    jmp {end_label}        # Jump to end"));
+
+                        // greater or equal case -> result is 1
+                        self.emit(&format!("{true_label}:"));
+                        self.emit("    mov $1, %rax       # Result is true (greater/equal)");
+
+                        self.emit(&format!("{end_label}:"));
+                    }
                 }
             }
             Expression::Unknown => {

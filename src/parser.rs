@@ -80,6 +80,8 @@ pub enum BinaryOperator {
     Divide,
     Equals,
     NotEquals,
+    Greater,
+    GreaterEqual,
     And,
     Or,
 }
@@ -213,6 +215,8 @@ impl Parser {
                 TokenType::Or => BinaryOperator::Or,
                 TokenType::BangEqual => BinaryOperator::NotEquals,
                 TokenType::EqualEqual => BinaryOperator::Equals,
+                TokenType::Greater => BinaryOperator::Greater,
+                TokenType::GreaterEqual => BinaryOperator::GreaterEqual,
                 _ => break,
             };
 
@@ -283,9 +287,11 @@ impl Parser {
             BinaryOperator::Or => 1,
             BinaryOperator::And => 2,
             BinaryOperator::Equals => 3,
-            BinaryOperator::NotEquals => 4,
-            BinaryOperator::Add | BinaryOperator::Subtract => 5,
-            BinaryOperator::Multiply | BinaryOperator::Divide => 6,
+            BinaryOperator::NotEquals => 3,
+            BinaryOperator::Greater => 3,
+            BinaryOperator::GreaterEqual => 3,
+            BinaryOperator::Add | BinaryOperator::Subtract => 4,
+            BinaryOperator::Multiply | BinaryOperator::Divide => 5,
         }
     }
     /// returns a ref to the current token
