@@ -19,7 +19,7 @@ A simple compiler written in Rust that translates C language into x86-64 assembl
 
 #### Expressions
 - [x] **Arithmetic operations**: `+`, `-`, `*`, `/`
-- [x] **Unary operations**: 
+- [x] **Unary operations**:
   - [x] Unary minus (`-`)
   - [x] Logical NOT (`!`)
   - [x] Bitwise NOT (`~`)
@@ -36,7 +36,7 @@ A simple compiler written in Rust that translates C language into x86-64 assembl
 - [ ] **Variable declarations and assignments**
 - [ ] **Local variable scoping**
 - [ ] **Function calls with argument passing**
-- [ ] **Multiple parameter support** (currently limited to 6 due to calling convention)
+- [x] **Multiple parameter support** (currently limited to 6 due to calling convention)
 
 #### Control Flow
 - [ ] **Conditional statements** (`if`/`else`)
