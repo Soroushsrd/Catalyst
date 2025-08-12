@@ -82,6 +82,8 @@ pub enum BinaryOperator {
     NotEquals,
     Greater,
     GreaterEqual,
+    Less,
+    LessEqual,
     And,
     Or,
 }
@@ -217,6 +219,8 @@ impl Parser {
                 TokenType::EqualEqual => BinaryOperator::Equals,
                 TokenType::Greater => BinaryOperator::Greater,
                 TokenType::GreaterEqual => BinaryOperator::GreaterEqual,
+                TokenType::Less => BinaryOperator::Less,
+                TokenType::LessEqual => BinaryOperator::LessEqual,
                 _ => break,
             };
 
@@ -290,6 +294,8 @@ impl Parser {
             BinaryOperator::NotEquals => 3,
             BinaryOperator::Greater => 3,
             BinaryOperator::GreaterEqual => 3,
+            BinaryOperator::Less => 3,
+            BinaryOperator::LessEqual => 3,
             BinaryOperator::Add | BinaryOperator::Subtract => 4,
             BinaryOperator::Multiply | BinaryOperator::Divide => 5,
         }
