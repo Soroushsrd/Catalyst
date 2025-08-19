@@ -7,6 +7,7 @@ pub struct AssemblyGenerator {
     stack_offset: i32,
     ///symbol -> stack offset
     symbols: HashMap<String, i32>,
+    label_counter: u32,
 }
 
 impl AssemblyGenerator {
@@ -15,6 +16,7 @@ impl AssemblyGenerator {
             output: Vec::new(),
             stack_offset: 0,
             symbols: HashMap::new(),
+            label_counter: 0u32,
         }
     }
 
@@ -70,17 +72,18 @@ impl AssemblyGenerator {
         let register = ["%rdi", "%rsi", "%rdx", "%rcx", "%r8", "%r9"];
 
         for (i, param) in parameter.iter().enumerate() {
-            if let Some(name) = &param.name {
-                if i < register.len() {
-                    // mvoing from register to stack
-                    // -8bytes for each 64bit value
-                    self.stack_offset -= 8;
-                    self.symbols.insert(name.name.clone(), self.stack_offset);
-                    self.emit(&format!(
-                        "   mov {}, {}(%rbp)",
-                        register[i], self.stack_offset
-                    ));
-                }
+            if let Some(name) = &param.name
+                && i < register.len()
+            {
+                // mvoing from register to stack
+                // -8bytes for each 64bit value
+                self.stack_offset -= 8;
+                self.symbols.insert(name.name.clone(), self.stack_offset);
+                self.emit(&format!(
+                    "   mov {}, {}(%rbp)",
+                    register[i], self.stack_offset
+                ));
+
                 //TODO: handle the case that method has taken more than 6 inputs. some sort of
                 //error maybe ?!
             }
@@ -147,7 +150,7 @@ impl AssemblyGenerator {
                 self.generate_expression(right);
                 self.emit("    pop %rcx        # Restore left operand to %rcx");
 
-                self.handle_binops(right, left, operator);
+                self.handle_binops(left, right, operator);
             }
             Expression::Unknown => {
                 self.emit("   # Unknown expression");
@@ -176,187 +179,113 @@ impl AssemblyGenerator {
                 self.emit("    cqo                # Sign extend %rax to %rdx:%rax");
                 self.emit("    idiv %rbx          # Divide %rdx:%rax by %rbx, result in %rax");
             }
-            BinaryOperator::Or => {
-                self.generate_expression(left);
-                self.emit("    test %rax, %rax    # Test left operand");
-
-                // Create unique labels for this OR operation
-                let true_label = format!("or_true_{}", self.output.len());
-                let end_label = format!("or_end_{}", self.output.len());
-                // if left is true (non-zero), jump to true_label
-                self.emit(&format!(
-                    "    jnz {true_label}         # Jump if left is true"
-                ));
-
-                // left is false, evaluate right part
-                self.generate_expression(right);
-                self.emit("    test %rax, %rax    # Test right operand");
-                self.emit(&format!(
-                    "    jnz {true_label}         # Jump if right is true"
-                ));
-
-                // if both of them are false, result is 0
-                self.emit("    mov $0, %rax       # Both operands false");
-                self.emit(&format!("    jmp {end_label}         # Jump to end"));
-
-                // true case-> result is 1
-                self.emit(&format!("{true_label}:"));
-                self.emit("    mov $1, %rax       # Result is true");
-
-                self.emit(&format!("{end_label}:"));
-            }
-            BinaryOperator::And => {
-                // Generate left operand
-                self.generate_expression(left);
-                self.emit("    test %rax, %rax    # Test left operand");
-
-                // TODO:labesl should be unique, for now im using output length
-                let false_label = format!("and_false_{}", self.output.len());
-                let end_label = format!("and_end_{}", self.output.len());
-
-                // left is false (0), jump to false_label
-                self.emit(&format!(
-                    "    jz {false_label}          # Jump if left is false"
-                ));
-
-                // left is true, evaluate right operand
-                self.generate_expression(right);
-                self.emit("    test %rax, %rax    # Test right operand");
-                self.emit(&format!(
-                    "    jz {false_label}          # Jump if right is false"
-                ));
-
-                // both are true, result is 1
-                self.emit("    mov $1, %rax       # Both operands true");
-                self.emit(&format!("    jmp {end_label}         # Jump to end"));
-
-                // false case-> result is 0
-                self.emit(&format!("{false_label}:"));
-                self.emit("    mov $0, %rax       # Result is false");
-
-                self.emit(&format!("{end_label}:"));
-            }
-            BinaryOperator::Equals => {
-                self.emit("    cmp %rax, %rcx     # Compare left and right");
-
-                let true_label = format!("eq_true_{}", self.output.len());
-                let end_label = format!("eq_end_{}", self.output.len());
-
-                // jump to true_label if the values are equal (zero flag set)
-                self.emit(&format!("    je {true_label}        # Jump if equal"));
-
-                // if values are not equal, result is 0
-                self.emit("    mov $0, %rax       # Result is false (not equal)");
-                self.emit(&format!("    jmp {end_label}        # Jump to end"));
-
-                // eq case -> result is 1
-                self.emit(&format!("{true_label}:"));
-                self.emit("    mov $1, %rax       # Result is true (equal)");
-
-                self.emit(&format!("{end_label}:"));
-            }
-            BinaryOperator::NotEquals => {
-                self.emit("    cmp %rax, %rcx     # Compare left and right");
-
-                let true_label = format!("neq_true_{}", self.output.len());
-                let end_label = format!("neq_end_{}", self.output.len());
-
-                self.emit(&format!("    jne {true_label}       # Jump if not equal"));
-
-                // values are equal, result is 0
-                self.emit("    mov $0, %rax       # Result is false (equal)");
-                self.emit(&format!("    jmp {end_label}        # Jump to end"));
-
-                // not equal case -> result is 1
-                self.emit(&format!("{true_label}:"));
-                self.emit("    mov $1, %rax       # Result is true (not equal)");
-
-                self.emit(&format!("{end_label}:"));
-            }
-            BinaryOperator::Greater => {
-                self.emit("    cmp %rax, %rcx     # Compare left and right");
-
-                let true_label = format!("gt_true_{}", self.output.len());
-                let end_label = format!("gt_end_{}", self.output.len());
-
-                self.emit(&format!("    jg {true_label}        # Jump if greater"));
-
-                // if left is not greater than right, result is 0
-                self.emit("    mov $0, %rax       # Result is false (not greater)");
-                self.emit(&format!("    jmp {end_label}        # Jump to end"));
-
-                // greater case -> result is 1
-                self.emit(&format!("{true_label}:"));
-                self.emit("    mov $1, %rax       # Result is true (greater)");
-
-                self.emit(&format!("{end_label}:"));
-            }
-            BinaryOperator::GreaterEqual => {
-                self.emit("    cmp %rax, %rcx     # Compare left and right");
-
-                let true_label = format!("ge_true_{}", self.output.len());
-                let end_label = format!("ge_end_{}", self.output.len());
-
-                self.emit(&format!(
-                    "    jge {true_label}       # Jump if greater or equal"
-                ));
-
-                // if left is not greater or equal to right, result is 0
-                self.emit("    mov $0, %rax       # Result is false (not greater/equal)");
-                self.emit(&format!("    jmp {end_label}        # Jump to end"));
-
-                // greater or equal case -> result is 1
-                self.emit(&format!("{true_label}:"));
-                self.emit("    mov $1, %rax       # Result is true (greater/equal)");
-
-                self.emit(&format!("{end_label}:"));
-            }
-            BinaryOperator::Less => {
-                self.emit("    cmp %rax, %rcx     # Compare left and right");
-
-                let true_label = format!("lt_true_{}", self.output.len());
-                let end_label = format!("lt_end_{}", self.output.len());
-
-                self.emit(&format!("    jl {true_label}        # Jump if less"));
-
-                // if left is not less than right, result is 0
-                self.emit("    mov $0, %rax       # Result is false (not less)");
-                self.emit(&format!("    jmp {end_label}        # Jump to end"));
-
-                // less case -> result is 1
-                self.emit(&format!("{true_label}:"));
-                self.emit("    mov $1, %rax       # Result is true (less)");
-
-                self.emit(&format!("{end_label}:"));
-            }
-            BinaryOperator::LessEqual => {
-                self.emit("    cmp %rax, %rcx     # Compare left and right");
-
-                let true_label = format!("le_true_{}", self.output.len());
-                let end_label = format!("le_end_{}", self.output.len());
-
-                self.emit(&format!("    jle {true_label}        # Jump if lessequal"));
-
-                // if left is not less than right, result is 0
-                self.emit("    mov $0, %rax       # Result is false (not lessequal)");
-                self.emit(&format!("    jmp {end_label}        # Jump to end"));
-
-                // less equal case -> result is 1
-                self.emit(&format!("{true_label}:"));
-                self.emit("    mov $1, %rax       # Result is true (lessequal)");
-
-                self.emit(&format!("{end_label}:"));
-            }
+            BinaryOperator::Or => self.emit_logical_or(left, right),
+            BinaryOperator::And => self.emit_logical_and(left, right),
+            BinaryOperator::Equals => self.emit_comparison("je", "eq"),
+            BinaryOperator::NotEquals => self.emit_comparison("jne", "neq"),
+            BinaryOperator::Greater => self.emit_comparison("jg", "gt"),
+            BinaryOperator::GreaterEqual => self.emit_comparison("jge", "ge"),
+            BinaryOperator::Less => self.emit_comparison("jl", "lt"),
+            BinaryOperator::LessEqual => self.emit_comparison("jle", "le"),
         }
     }
+
+    fn emit_logical_or(&mut self, left: &Expression, right: &Expression) {
+        self.generate_expression(left);
+        self.emit("    test %rax, %rax    # Test left operand");
+
+        // Create unique labels for this OR operation
+        let true_label = format!("or_true_{}", self.generate_label());
+        let end_label = format!("or_end_{}", self.generate_label());
+        // if left is true (non-zero), jump to true_label
+        self.emit(&format!(
+            "    jnz {true_label}         # Jump if left is true"
+        ));
+
+        // left is false, evaluate right part
+        self.generate_expression(right);
+        self.emit("    test %rax, %rax    # Test right operand");
+        self.emit(&format!(
+            "    jnz {true_label}         # Jump if right is true"
+        ));
+
+        // if both of them are false, result is 0
+        self.emit("    mov $0, %rax       # Both operands false");
+        self.emit(&format!("    jmp {end_label}         # Jump to end"));
+
+        // true case-> result is 1
+        self.emit(&format!("{true_label}:"));
+        self.emit("    mov $1, %rax       # Result is true");
+
+        self.emit(&format!("{end_label}:"));
+    }
+
+    fn emit_logical_and(&mut self, left: &Expression, right: &Expression) {
+        // Generate left operand
+        self.generate_expression(left);
+        self.emit("    test %rax, %rax    # Test left operand");
+
+        let false_label = format!("and_false_{}", self.generate_label());
+        let end_label = format!("and_end_{}", self.generate_label());
+
+        // left is false (0), jump to false_label
+        self.emit(&format!(
+            "    jz {false_label}          # Jump if left is false"
+        ));
+
+        // left is true, evaluate right operand
+        self.generate_expression(right);
+        self.emit("    test %rax, %rax    # Test right operand");
+        self.emit(&format!(
+            "    jz {false_label}          # Jump if right is false"
+        ));
+
+        // both are true, result is 1
+        self.emit("    mov $1, %rax       # Both operands true");
+        self.emit(&format!("    jmp {end_label}         # Jump to end"));
+
+        // false case-> result is 0
+        self.emit(&format!("{false_label}:"));
+        self.emit("    mov $0, %rax       # Result is false");
+
+        self.emit(&format!("{end_label}:"));
+    }
+
+    fn emit_comparison(&mut self, jump_instr: &str, op: &str) {
+        self.emit("    cmp %rax, %rcx     # Compare left and right");
+
+        let true_label = format!("{}_true_{}", op, self.generate_label());
+        let end_label = format!("{}_end_{}", op, self.generate_label());
+
+        self.emit(&format!(
+            "    {jump_instr} {true_label}        # Jump if true"
+        ));
+
+        // if left is not less than right, result is 0
+        self.emit("    mov $0, %rax       # Result is false");
+        self.emit(&format!("    jmp {end_label}        # Jump to end"));
+
+        // less equal case -> result is 1
+        self.emit(&format!("{true_label}:"));
+        self.emit("    mov $1, %rax       # Result is true");
+
+        self.emit(&format!("{end_label}:"));
+    }
+
     /// saves the generated instruction into output vec
     fn emit(&mut self, instruction: &str) {
         self.output.push(instruction.to_string());
     }
+
     fn emit_function_epilogue(&mut self) {
         self.emit("    mov %rbp, %rsp");
         self.emit("    pop %rbp");
         self.emit("    ret");
+    }
+
+    fn generate_label(&mut self) -> u32 {
+        self.label_counter += 1;
+        self.label_counter
     }
 }
 
