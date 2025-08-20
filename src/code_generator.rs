@@ -2,11 +2,18 @@ use crate::parser::*;
 use std::io::Write;
 use std::{collections::HashMap, fs::File, io};
 
+#[derive(Debug, Clone)]
+pub struct VariableInfo {
+    pub offset: i32,
+    pub size: usize,
+    pub var_type: ReturnType,
+}
+
 pub struct AssemblyGenerator {
     output: Vec<String>,
     stack_offset: i32,
     ///symbol -> stack offset
-    symbols: HashMap<String, i32>,
+    symbols: HashMap<String, VariableInfo>,
     label_counter: u32,
 }
 
@@ -75,10 +82,22 @@ impl AssemblyGenerator {
             if let Some(name) = &param.name
                 && i < register.len()
             {
+                //WARNING: for now im just handling ints as 64 bits
+
                 // mvoing from register to stack
                 // -8bytes for each 64bit value
+                // aligning to 8byte boundary for stack efficiency
                 self.stack_offset -= 8;
-                self.symbols.insert(name.name.clone(), self.stack_offset);
+                // self.symbols.insert(name.name.clone(), self.stack_offset);
+                self.symbols.insert(
+                    name.name.clone(),
+                    VariableInfo {
+                        offset: self.stack_offset,
+                        size: self.get_type_size(&ReturnType::Int),
+                        var_type: ReturnType::Int,
+                    },
+                );
+
                 self.emit(&format!(
                     "   mov {}, {}(%rbp)",
                     register[i], self.stack_offset
@@ -108,28 +127,59 @@ impl AssemblyGenerator {
             }
             Statement::Expression(expr) => self.generate_expression(expr),
             Statement::VarDeclaration {
-                var_type: _,
+                var_type,
                 name,
                 initializer,
             } => {
                 // allocating some stack space
                 //WARNING: for now im handling everything as u64
                 // so 8 bytes is being allocated here.
-                self.stack_offset -= 8;
-                self.symbols.insert(name.name.clone(), self.stack_offset);
+                let size = self.get_type_size(var_type);
+
+                if size == 0 {
+                    self.emit(&format!(
+                        "    # Error: Cannot declare variable of void type: {}",
+                        name.name
+                    ));
+                    return;
+                }
+
+                // Align stack allocation based on type size
+                let alignment = match size {
+                    1 => 1, // char: 1-byte alignment
+                    2 => 2, // short: 2-byte alignment
+                    4 => 4, // int: 4-byte alignment
+                    8 => 8, // long/double/pointer: 8-byte alignment
+                    _ => 8,
+                };
+
+                // Align stack offset
+                self.stack_offset =
+                    ((self.stack_offset - size as i32) / alignment as i32) * alignment as i32;
+
+                let var_info = VariableInfo {
+                    offset: self.stack_offset,
+                    size,
+                    var_type: var_type.clone(),
+                };
+                self.symbols.insert(name.name.clone(), var_info.clone());
 
                 self.emit(&format!("   #variables declaration: {}", name.name));
 
                 if let Some(init) = initializer {
                     self.generate_expression(init);
                     self.emit(&format!(
-                        "   mov %rax, {}(%rbp)  #initializes variables {}",
-                        self.stack_offset, name.name
+                        "   {} %rax, {}(%rbp)  #initializes variables {}",
+                        self.get_mov_instr(var_type),
+                        self.stack_offset,
+                        name.name
                     ));
                 } else {
                     self.emit(&format!(
-                        "   movq $0, {}(%rbp)   #initializes variables {} to zero",
-                        self.stack_offset, name.name
+                        "   {} $0, {}(%rbp)   #initializes variables {} to zero",
+                        self.get_mov_instr(var_type),
+                        self.stack_offset,
+                        name.name
                     ));
                 }
             }
@@ -143,9 +193,9 @@ impl AssemblyGenerator {
             }
             Expression::Identifier(name) => {
                 // should first lookup the value in symbol table
-                if let Some(offset) = self.symbols.get(name) {
+                if let Some(info) = self.symbols.get(name) {
                     // then load it into rax
-                    self.emit(&format!("   mov {offset}(%rbp), %rax"));
+                    self.emit(&format!("   mov {}(%rbp), %rax", info.offset));
                 } else {
                     // undefied
                     self.emit(&format!("   # Error: undefined variable '{name}'"));
@@ -184,10 +234,10 @@ impl AssemblyGenerator {
                 self.generate_expression(value);
 
                 //store it in target variable
-                if let Some(offset) = self.symbols.get(target) {
+                if let Some(info) = self.symbols.get(target) {
                     self.emit(&format!(
                         "   mov %rax, {}(%rbp)  #assigning to variable {}",
-                        offset, target
+                        info.offset, target
                     ));
                     //now assignment expr will retrn the assigned value
                     // rax already contains it
@@ -331,6 +381,29 @@ impl AssemblyGenerator {
     fn generate_label(&mut self) -> u32 {
         self.label_counter += 1;
         self.label_counter
+    }
+
+    fn get_mov_instr(&self, var_type: &ReturnType) -> &'static str {
+        match var_type {
+            ReturnType::Int => "movl",
+            ReturnType::Void => "movq",
+            ReturnType::Long => "movq",
+            ReturnType::Char => "movb",
+            ReturnType::Float => "movss",
+            ReturnType::Double => "movsd",
+            ReturnType::Pointer(_) => todo!("how do i handle pointers?"),
+        }
+    }
+    fn get_type_size(&self, var_type: &ReturnType) -> usize {
+        match var_type {
+            ReturnType::Int => 4,
+            ReturnType::Void => 0,
+            ReturnType::Long => 8,
+            ReturnType::Char => 1,
+            ReturnType::Float => 4,
+            ReturnType::Double => 8,
+            ReturnType::Pointer(_) => 8, // u64 on x86-64
+        }
     }
 }
 

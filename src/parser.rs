@@ -29,7 +29,13 @@ pub struct Identifier {
 pub enum ReturnType {
     Void,
     Int,
-    //TODO:
+
+    //WARNING: not implemented yet
+    Long,
+    Char,
+    Float,
+    Double,
+    Pointer(Box<ReturnType>),
 }
 
 #[derive(Debug, Clone)]
