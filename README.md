@@ -33,7 +33,7 @@ A simple compiler written in Rust that translates C language into x86-64 assembl
 - [x] **Block comments** (`/* */`)
 
 #### Core Language Features
-- [ ] **Variable declarations and assignments**
+- [x] **Variable declarations and assignments**
 - [ ] **Local variable scoping**
 - [ ] **Function calls with argument passing**
 - [x] **Multiple parameter support** (currently limited to 6 due to calling convention)
