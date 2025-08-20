@@ -52,6 +52,12 @@ pub enum ParameterType {
 pub enum Statement {
     Block(Vec<Statement>),
     Return(Option<Expression>),
+    VarDeclaration {
+        var_type: ReturnType,
+        name: Identifier,
+        initializer: Option<Expression>,
+    },
+    Expression(Expression),
     //TODO:
 }
 
@@ -68,6 +74,10 @@ pub enum Expression {
         left: Box<Expression>,
         operator: BinaryOperator,
         right: Box<Expression>,
+    },
+    Assignment {
+        target: String,
+        value: Box<Expression>,
     },
     //TODO:
 }
@@ -122,6 +132,7 @@ impl Parser {
             return_type,
         })
     }
+    /// used to parse function return type
     fn parse_type(&mut self) -> Result<ReturnType, String> {
         let token = self
             .peek()
@@ -135,6 +146,8 @@ impl Parser {
         self.advance();
         type_
     }
+    /// parses identifiers. These identifiers could be variable names,
+    /// method names, and so on!
     fn parse_identifiers(&mut self) -> Result<Identifier, String> {
         let ident = self
             .peek()
@@ -146,8 +159,10 @@ impl Parser {
         self.advance();
         expression
     }
+    /// parses function parameters
+    /// should be able to handle 6 parameters per method
     fn parse_parameters(&mut self) -> Result<Vec<Parameter>, String> {
-        let mut parameters = Vec::with_capacity(5);
+        let mut parameters = Vec::with_capacity(6);
 
         if let Some(token) = self.peek() {
             match *token.token_type() {
@@ -163,12 +178,17 @@ impl Parser {
                     return Ok(parameters);
                 }
                 _ => {
+                    //TODO:
                     todo!()
                 }
             }
         }
         Ok(parameters)
     }
+
+    /// block statements contain what ever comes after function declaration
+    /// and is inside its braces
+    /// TODO: Closures
     fn parse_block_statement(&mut self) -> Result<Statement, String> {
         self.consume_type(&TokenType::LeftBrace, "Expected '{'")?;
         let mut statements = Vec::with_capacity(5);
@@ -178,13 +198,45 @@ impl Parser {
         self.consume_type(&TokenType::RightBrace, "Expected '}'")?;
         Ok(Statement::Block(statements))
     }
+
+    /// parses different statements
     fn parse_statement(&mut self) -> Result<Statement, String> {
         if self.check_token_type(&TokenType::Return) {
             self.parse_return_statement()
+        } else if self.check_token_type(&TokenType::Int) || self.check_token_type(&TokenType::Void)
+        {
+            self.parse_var_declaration()
         } else {
-            Err("unknown statement".to_string())
+            let expr = self.parse_expression()?;
+            self.consume_type(&TokenType::Semicolon, "expected a semicolon")?;
+            Ok(Statement::Expression(expr))
         }
     }
+
+    /// parses statements such as int a; or int a = 2;
+    fn parse_var_declaration(&mut self) -> Result<Statement, String> {
+        let var_type = self.parse_type()?;
+        let name = self.parse_identifiers()?;
+
+        let initializer = if self.check_token_type(&TokenType::Equal) {
+            self.advance();
+            Some(self.parse_expression()?)
+        } else {
+            None
+        };
+
+        let _ = self.consume_type(&TokenType::Semicolon, "expected a semicolon");
+        Ok(Statement::VarDeclaration {
+            var_type,
+            name,
+            initializer,
+        })
+    }
+
+    /// parses the return statements such as
+    /// return b;
+    /// or
+    /// return 1 && 0;
     fn parse_return_statement(&mut self) -> Result<Statement, String> {
         self.consume_type(&TokenType::Return, "Expected 'return'")?;
 
@@ -201,9 +253,38 @@ impl Parser {
         Ok(Statement::Return(expr))
     }
 
+    /// for now just calls parse assignment
+    /// the differentiation between parse_assignment and parse_expression
+    /// is done to allow parse_assignment to be recursively called
     fn parse_expression(&mut self) -> Result<Expression, String> {
-        self.parse_binary_expression(0)
+        self.parse_assignment()
     }
+
+    /// handles assignment expressions such as int a = 1;
+    fn parse_assignment(&mut self) -> Result<Expression, String> {
+        let expr = self.parse_binary_expression(0)?;
+
+        if self.check_token_type(&TokenType::Equal) {
+            self.advance();
+            let value = self.parse_assignment()?;
+
+            if let Expression::Identifier(name) = expr {
+                Ok(Expression::Assignment {
+                    target: name,
+                    value: Box::new(value),
+                })
+            } else {
+                Err("Invalid assignment target".to_string())
+            }
+        } else {
+            Ok(expr)
+        }
+    }
+
+    /// firsts imposes the ~ or ! unary expressions
+    /// then parses the binary operators
+    /// and based on operator precedence,
+    /// parses the complete binary expression repeatedly
     fn parse_binary_expression(&mut self, min_precedence: u8) -> Result<Expression, String> {
         let mut left = self.parse_unary_expression()?;
 
@@ -239,6 +320,7 @@ impl Parser {
         }
         Ok(left)
     }
+
     /// parses unary expressions like ~, !, -
     fn parse_unary_expression(&mut self) -> Result<Expression, String> {
         let token = self
@@ -265,6 +347,7 @@ impl Parser {
             _ => self.parse_primary_expression(),
         }
     }
+
     /// based on token type defined in lexer module, parses the primary tokens
     /// then matches it agains expressions and advances one token forward
     fn parse_primary_expression(&mut self) -> Result<Expression, String> {
@@ -286,6 +369,12 @@ impl Parser {
         Ok(expression)
     }
 
+    /// returns the precendence on which binary operators
+    /// must be ordered/handled.
+    /// "||" and "&&" binops have the least precedences
+    /// "==", "!=", ">", ">=", "<" and "<=" all have the same precendence
+    /// "+" and "-" have the same precendence
+    /// "*" and "/" have the same and highest precendence
     fn get_precendece(&self, operator: &BinaryOperator) -> u8 {
         match operator {
             BinaryOperator::Or => 1,
@@ -298,6 +387,7 @@ impl Parser {
             BinaryOperator::LessEqual => 3,
             BinaryOperator::Add | BinaryOperator::Subtract => 4,
             BinaryOperator::Multiply | BinaryOperator::Divide => 5,
+            //TODO: %
         }
     }
     /// returns a ref to the current token
@@ -335,6 +425,8 @@ impl Parser {
         }
     }
 
+    /// pretty obvious by its name, checks to see if the current
+    /// token in the stream matches a certain (input) token
     fn check_token_type(&self, token_type: &TokenType) -> bool {
         if let Some(token) = self.peek() {
             token.token_type() == token_type
@@ -342,6 +434,10 @@ impl Parser {
             false
         }
     }
+
+    /// takes in a token type, sees if the current token in the stream matches
+    /// the tokentype in question. if yes, consumes the token and moves 1 position forward
+    /// otherwise returns an error
     fn consume_type(&mut self, token_type: &TokenType, error_msg: &str) -> Result<&Token, String> {
         if self.check_token_type(token_type) {
             Ok(self.advance().unwrap())

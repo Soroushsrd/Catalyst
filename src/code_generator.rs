@@ -106,6 +106,33 @@ impl AssemblyGenerator {
 
                 self.emit_function_epilogue();
             }
+            Statement::Expression(expr) => self.generate_expression(expr),
+            Statement::VarDeclaration {
+                var_type: _,
+                name,
+                initializer,
+            } => {
+                // allocating some stack space
+                //WARNING: for now im handling everything as u64
+                // so 8 bytes is being allocated here.
+                self.stack_offset -= 8;
+                self.symbols.insert(name.name.clone(), self.stack_offset);
+
+                self.emit(&format!("   #variables declaration: {}", name.name));
+
+                if let Some(init) = initializer {
+                    self.generate_expression(init);
+                    self.emit(&format!(
+                        "   mov %rax, {}(%rbp)  #initializes variables {}",
+                        self.stack_offset, name.name
+                    ));
+                } else {
+                    self.emit(&format!(
+                        "   movq $0, {}(%rbp)   #initializes variables {} to zero",
+                        self.stack_offset, name.name
+                    ));
+                }
+            }
         }
     }
     fn generate_expression(&mut self, expression: &Expression) {
@@ -151,6 +178,24 @@ impl AssemblyGenerator {
                 self.emit("    pop %rcx        # Restore left operand to %rcx");
 
                 self.handle_binops(left, right, operator);
+            }
+            Expression::Assignment { target, value } => {
+                // handle the value
+                self.generate_expression(value);
+
+                //store it in target variable
+                if let Some(offset) = self.symbols.get(target) {
+                    self.emit(&format!(
+                        "   mov %rax, {}(%rbp)  #assigning to variable {}",
+                        offset, target
+                    ));
+                    //now assignment expr will retrn the assigned value
+                    // rax already contains it
+                } else {
+                    self.emit(&format!(
+                        "   # Error: undefined variable '{target}' in assignment"
+                    ));
+                }
             }
             Expression::Unknown => {
                 self.emit("   # Unknown expression");
@@ -296,5 +341,6 @@ fn last_statement_is_return(statement: &Statement) -> bool {
             .map(last_statement_is_return)
             .unwrap_or(false),
         Statement::Return(_) => true,
+        _ => false,
     }
 }
