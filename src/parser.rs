@@ -1,5 +1,6 @@
 use crate::{
     errors::{CompilerError, ErrorType},
+    expect_token,
     lexer::{Token, TokenType},
 };
 
@@ -173,10 +174,7 @@ impl Parser {
     }
     /// used to parse function return type
     fn parse_type(&mut self) -> ParseResult<ReturnType> {
-        let token = self
-            .peek()
-            .ok_or_else(|| self.error(ErrorType::UnexpectedToken, "Unexpected end of file"))?;
-
+        let token = expect_token!(self, ErrorType::UnexpectedToken, "Unexpected end of file");
         let type_ = match token.token_type() {
             TokenType::Int => Ok(ReturnType::Int),
             TokenType::Void => Ok(ReturnType::Void),
@@ -193,12 +191,7 @@ impl Parser {
     /// parses identifiers. These identifiers could be variable names,
     /// method names, and so on!
     fn parse_identifiers(&mut self) -> ParseResult<Identifier> {
-        let ident = self.peek().ok_or_else(|| {
-            self.error(
-                ErrorType::UnexpectedToken,
-                "unexpected end of file. Expected identifier",
-            )
-        })?;
+        let ident = expect_token!(self, ErrorType::UnexpectedToken, "Unexpected end of file");
         let expression = match ident.token_type() {
             TokenType::Identifier(name) => Ok(Identifier { name: name.clone() }),
             _ => Err(self.error(ErrorType::SyntaxError, "Expected identifier")),
@@ -256,9 +249,7 @@ impl Parser {
     }
 
     fn parse_parameter_type(&mut self) -> ParseResult<ParameterType> {
-        let token = self
-            .peek()
-            .ok_or_else(|| self.error(ErrorType::UnexpectedToken, "Unexptected end of file"))?;
+        let token = expect_token!(self, ErrorType::UnexpectedToken, "Unexpected end of file");
         let param_type = match token.type_ {
             TokenType::Int => ParameterType::Int,
             TokenType::Void => ParameterType::Void,
@@ -431,15 +422,8 @@ impl Parser {
     }
     /// parses unary expressions like ~, !, -
     fn parse_unary_expression(&mut self) -> ParseResult<Expression> {
-        let token = self
-            .peek()
-            .ok_or_else(|| {
-                self.error(
-                    ErrorType::UnexpectedToken,
-                    "unexpected end of line, expected operation.",
-                )
-            })?
-            .clone();
+        let token =
+            expect_token!(self, ErrorType::UnexpectedToken, "Unexpected end of file").clone();
 
         match token.token_type() {
             TokenType::Minus => {
@@ -501,12 +485,12 @@ impl Parser {
             BinaryOperator::And => 2,
             BinaryOperator::Equals => 3,
             BinaryOperator::NotEquals => 3,
-            BinaryOperator::Greater => 3,
-            BinaryOperator::GreaterEqual => 3,
-            BinaryOperator::Less => 3,
-            BinaryOperator::LessEqual => 3,
-            BinaryOperator::Add | BinaryOperator::Subtract => 4,
-            BinaryOperator::Multiply | BinaryOperator::Divide => 5,
+            BinaryOperator::Greater => 4,
+            BinaryOperator::GreaterEqual => 4,
+            BinaryOperator::Less => 4,
+            BinaryOperator::LessEqual => 4,
+            BinaryOperator::Add | BinaryOperator::Subtract => 5,
+            BinaryOperator::Multiply | BinaryOperator::Divide => 6,
             //TODO: %
         }
     }
@@ -567,7 +551,6 @@ impl Parser {
     }
     fn error(&self, error_type: ErrorType, message: &str) -> CompilerError {
         let (line, column) = if let Some(token) = self.peek() {
-            //TODO: fix the column counter
             (token.line(), token.column())
         } else if let Some(token) = self.previous() {
             (token.line(), token.column())

@@ -234,14 +234,22 @@ impl AssemblyGenerator {
                 left,
                 operator,
                 right,
-            } => {
-                self.generate_expression(left);
-                self.emit("    push %rax       # Save left operatnd");
-                self.generate_expression(right);
-                self.emit("    pop %rcx        # Restore left operand to %rcx");
+            } => match operator {
+                BinaryOperator::And => {
+                    self.emit_logical_and(left, right);
+                }
+                BinaryOperator::Or => {
+                    self.emit_logical_or(left, right);
+                }
+                _ => {
+                    self.generate_expression(left);
+                    self.emit("    push %rax       # Save left operatnd");
+                    self.generate_expression(right);
+                    self.emit("    pop %rcx        # Restore left operand to %rcx");
 
-                self.handle_binops(left, right, operator);
-            }
+                    self.handle_binops(left, right, operator);
+                }
+            },
             Expression::Assignment { target, value } => {
                 // handle the value
                 self.generate_expression(value);

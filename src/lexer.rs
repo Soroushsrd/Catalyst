@@ -10,10 +10,6 @@ use crate::errors::{CompilerError, ErrorType};
 // That rule states that if we can match orchid as an identifier
 // or as a keyword, then the former wins
 
-pub fn report(line_number: usize, message: &str) {
-    error!("line: {} --> Err: {} ", line_number, message);
-}
-
 #[derive(Debug, Clone)]
 pub struct Scanner {
     chars: Vec<char>,
@@ -478,7 +474,11 @@ impl From<char> for TokenType {
             ':' => TokenType::Colon,
             //TODO: for now!
             _ => {
-                report(0, &format!("Unexpected char {value}"));
+                error!(
+                    "line: {} --> Err: {} ",
+                    0,
+                    &format!("Unexpected char {value}")
+                );
                 TokenType::Error(format!("Error: Invalid char => {value}"))
             }
         }
