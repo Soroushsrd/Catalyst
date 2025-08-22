@@ -108,6 +108,7 @@ impl AssemblyGenerator {
             }
         }
     }
+    //TODO: break into smaller parts
     fn generate_statement(&mut self, statement: &Statement) {
         match statement {
             Statement::Block(statement) => {
@@ -181,6 +182,45 @@ impl AssemblyGenerator {
                         self.stack_offset,
                         name.name
                     ));
+                }
+            }
+            Statement::If {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
+                let id = self.generate_label();
+                let else_label = format!("if_else_{}", id);
+                let end_label = format!("if_end_{}", id);
+
+                self.generate_expression(condition);
+                self.emit("    test %rax, %rax    # Test if condition");
+
+                if else_branch.is_some() {
+                    self.emit(&format!(
+                        "    jz {}              # Jump to else branch if condition is false",
+                        else_label
+                    ));
+
+                    self.generate_statement(then_branch);
+                    self.emit(&format!(
+                        "    jmp {}             # Jump to end, skip else branch",
+                        end_label
+                    ));
+
+                    self.emit(&format!("{}:", else_label));
+                    self.generate_statement(else_branch.as_ref().unwrap());
+
+                    self.emit(&format!("{}:", end_label));
+                } else {
+                    self.emit(&format!(
+                        "    jz {}              # Jump to end if condition is false",
+                        end_label
+                    ));
+
+                    self.generate_statement(then_branch);
+
+                    self.emit(&format!("{}:", end_label));
                 }
             }
         }

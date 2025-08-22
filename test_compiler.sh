@@ -40,7 +40,6 @@ run_correct_program () {
 
 compare_program_results () {
     echo "DEBUG: expected_exit_code='$expected_exit_code', actual_exit_code='$actual_exit_code'"
-    echo "DEBUG: expected_out='$expected_out', actual_out='$actual_out'"
 
     # make sure exit code is correct
     if [ "$expected_exit_code" -ne "$actual_exit_code" ] || [ "$expected_out" != "$actual_out" ]

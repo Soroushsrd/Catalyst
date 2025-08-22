@@ -75,7 +75,11 @@ pub enum Statement {
         initializer: Option<Expression>,
     },
     Expression(Expression),
-    //TODO:
+    If {
+        condition: Box<Expression>,
+        then_branch: Box<Statement>,
+        else_branch: Option<Box<Statement>>,
+    }, //TODO:
 }
 
 /// evaluates to a value and can be used as part of other expressions
@@ -280,13 +284,71 @@ impl Parser {
     fn parse_statement(&mut self) -> ParseResult<Statement> {
         if self.check_token_type(&TokenType::Return) {
             self.parse_return_statement()
-        } else if self.check_token_type(&TokenType::Int) || self.check_token_type(&TokenType::Void)
+        } else if self
+            .peek()
+            .is_some_and(|t| self.is_parameter_type(t.token_type()))
         {
             self.parse_var_declaration()
+        } else if self.check_token_type(&TokenType::If) {
+            self.parse_if_flow()
         } else {
             let expr = self.parse_expression()?;
             self.consume_type(&TokenType::Semicolon, "expected a semicolon")?;
             Ok(Statement::Expression(expr))
+        }
+    }
+
+    fn parse_if_flow(&mut self) -> ParseResult<Statement> {
+        self.consume_type(&TokenType::If, "Expected an if statement")?;
+        if self.check_token_type(&TokenType::LeftParen) {
+            self.consume_type(
+                &TokenType::LeftParen,
+                "Condition should start with a parenthesis",
+            )?;
+
+            let condition = self.parse_expression()?;
+
+            self.consume_type(
+                &TokenType::RightParen,
+                "Condition should end with a parenthesis",
+            )?;
+
+            if self.check_token_type(&TokenType::LeftBrace) {
+                self.consume_type(&TokenType::RightBrace, "block should start with a brace")?;
+            }
+            let then_branch = self.parse_statement()?;
+
+            if self.check_token_type(&TokenType::LeftBrace) {
+                self.consume_type(&TokenType::LeftBrace, "block should end with a brace")?;
+            }
+
+            let else_branch = if self.check_token_type(&TokenType::Else) {
+                //for else
+                self.advance();
+                Some(Box::new(self.parse_statement()?))
+            } else {
+                None
+            };
+            return Ok(Statement::If {
+                condition: Box::new(condition),
+                then_branch: Box::new(then_branch),
+                else_branch,
+            });
+        }
+        Err(self.error(
+            ErrorType::SyntaxError,
+            "Conditiosns should be inside parenthesis",
+        ))
+    }
+
+    fn is_parameter_type(&self, token_t: &TokenType) -> bool {
+        match token_t {
+            TokenType::Int
+            | TokenType::Void
+            | TokenType::Float
+            | TokenType::Double
+            | TokenType::Char => true,
+            _ => false,
         }
     }
 
@@ -407,9 +469,9 @@ impl Parser {
             // we consume the question mark
             self.advance();
 
-            let true_expr = self.parse_ternary_operation()?;
+            let true_expr = self.parse_assignment()?;
             self.consume_type(&TokenType::Colon, "expected a colon (:)")?;
-            let false_expr = self.parse_ternary_operation()?;
+            let false_expr = self.parse_assignment()?;
 
             Ok(Expression::TernaryOP {
                 condition: Box::new(condition),
