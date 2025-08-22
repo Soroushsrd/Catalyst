@@ -58,7 +58,7 @@ impl CompilerError {
 
         if let Some(source_line) = &self.source_line {
             output.push_str("   |\n");
-            output.push_str(&format!("{:3} | {}\n", self.line, source_line));
+            output.push_str(&format!("{:3}| {}\n", self.line, source_line));
 
             let spaces = if self.column > 0 { self.column - 1 } else { 0 };
             output.push_str(&format!("   | {}\x1b[31m^\x1b[0m\n", " ".repeat(spaces)));
