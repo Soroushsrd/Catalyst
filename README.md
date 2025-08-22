@@ -7,15 +7,19 @@ A simple compiler written in Rust that translates C language into x86-64 assembl
 ### Currently Supported ✓
 
 #### Language Constructs
-- [x] **Function definitions** with return types (`int`, `void`)
+- [x] **Function definitions** with return types
 - [x] **Return statements** with optional expressions
 - [x] **Function parameters** (basic parameter parsing implemented)
+- [x] **Declarations and Assignments**
 - [x] **Block statements** with curly braces `{}`
 
 #### Data Types
 - [x] **Integers** (`int`)
 - [x] **Void** (`void`)
-- [x] **Floating-point numbers** (parsed but treated as integers in codegen)
+- [x] **Char** (`char`)
+- [x] **Long** (`long`)
+- [x] **Double** (`double`)
+- [x] **Float** (`float`)
 
 #### Expressions
 - [x] **Arithmetic operations**: `+`, `-`, `*`, `/`
@@ -27,6 +31,7 @@ A simple compiler written in Rust that translates C language into x86-64 assembl
 - [x] **Parenthesized expressions**
 - [x] **Variable references** (identifier lookup)
 - [x] **Numeric literals**
+- [x] **Ternary expressions**
 
 #### Comments
 - [x] **Single-line comments** (`//`)
