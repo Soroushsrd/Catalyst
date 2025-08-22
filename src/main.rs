@@ -1,6 +1,7 @@
 mod code_generator;
 mod errors;
 mod lexer;
+mod macros;
 mod parser;
 use std::{
     fs,
@@ -41,7 +42,11 @@ fn main() -> Result<()> {
 
 fn run_file(path: &str, file_name: &str) -> Result<()> {
     let bytes_str = fs::read_to_string(std::path::PathBuf::from_str(path).unwrap())?;
-    run(&bytes_str, file_name)?;
+    let source_path = std::path::Path::new(path);
+    let source_dir = source_path.parent().unwrap_or(std::path::Path::new("."));
+    let output_path = source_dir.join(file_name);
+
+    run(&bytes_str, output_path.to_str().unwrap())?;
     Ok(())
 }
 
@@ -84,7 +89,7 @@ fn compile_to_exe(assembly_file: &str, output_name: &str) -> Result<()> {
         return Err(ErrorKind::Other.into());
     }
 
-    std::fs::remove_file("temp.o")?;
+    // std::fs::remove_file("temp.o")?;
     println!("Compilation successful. output file {output_name}");
     Ok(())
 }
