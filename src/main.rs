@@ -1,4 +1,5 @@
 mod code_generator;
+mod errors;
 mod lexer;
 mod parser;
 use std::{
@@ -33,7 +34,7 @@ fn main() -> Result<()> {
     match input.len() {
         2 => run_file(&input[1], file_name)?,
         1 => run_prompt(file_name)?,
-        _ => info!("Usage: rlox [script]"),
+        _ => info!("Usage: Catalyst [script]"),
     }
     Ok(())
 }
@@ -90,16 +91,24 @@ fn compile_to_exe(assembly_file: &str, output_name: &str) -> Result<()> {
 fn run(source_code: &str, file_name: &str) -> Result<()> {
     let mut scanner = Scanner::new(source_code);
     let tokens: Vec<Token> = scanner.scan_tokens();
-    println!("***TOKENS***");
-    for token in tokens.iter() {
-        println!("Token: {token:?}");
+    if !scanner.get_errors().is_empty() {
+        for error in scanner.get_errors() {
+            eprintln!("{}", error.format_error());
+        }
     }
+    // println!("***TOKENS***");
+    // for token in tokens.iter() {
+    //     println!("Token: {token:?}");
+    // }
 
-    let mut parser = Parser::new(tokens);
+    let mut parser = Parser::new(tokens, source_code);
     match parser.parse() {
         Ok(ast) => {
-            println!("\n*** AST ***");
-            println!("AST: {ast:#?}");
+            if !parser.get_errors().is_empty() {
+                for error in parser.get_errors() {
+                    eprintln!("{}", error.format_error());
+                }
+            }
 
             let mut codegen = AssemblyGenerator::new();
             codegen.generate_program(&ast);
@@ -109,8 +118,11 @@ fn run(source_code: &str, file_name: &str) -> Result<()> {
             }
             compile_to_exe(&assembly_file_name, file_name)?;
         }
-        Err(e) => {
-            println!("Parse error: {e}");
+        Err(errors) => {
+            for error in errors {
+                eprintln!("{}", error.format_error());
+            }
+            eprintln!("Compilation failed due to parse errors.");
         }
     }
     Ok(())

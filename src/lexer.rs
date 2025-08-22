@@ -2,6 +2,8 @@ use std::fmt::Display;
 
 use tracing::error;
 
+use crate::errors::{CompilerError, ErrorType};
+
 // maximal munch: When two
 // lexical grammar rules can both match a chunk of code that the scanner is
 // looking at, whichever one matches the most characters wins.
@@ -21,6 +23,9 @@ pub struct Scanner {
     start: usize,
     current: usize,
     line: usize,
+    column: usize,
+    start_column: usize,
+    errors: Vec<CompilerError>,
 }
 
 impl Scanner {
@@ -33,6 +38,9 @@ impl Scanner {
             start: 0,
             current: 0,
             line: 1,
+            column: 1,
+            start_column: 1,
+            errors: Vec::with_capacity(10),
         }
     }
 
@@ -42,6 +50,7 @@ impl Scanner {
     pub fn scan_tokens(&mut self) -> Vec<Token> {
         while self.current < self.source.len() {
             self.start = self.current;
+            self.start_column = self.column;
             self.scan_token();
         }
         self.tokens.push(Token::new(
@@ -49,6 +58,7 @@ impl Scanner {
             "".to_string(),
             "null".to_string(),
             self.line,
+            self.column,
         ));
         self.tokens.to_vec()
     }
@@ -72,6 +82,10 @@ impl Scanner {
             '-' => self.add_token(TokenType::Minus),
             '+' => self.add_token(TokenType::Plus),
             ';' => self.add_token(TokenType::Semicolon),
+            ':' => self.add_token(TokenType::Colon),
+            '?' => self.add_token(TokenType::QMark),
+            //TODO: handle pointers using the variation below(star). this should be able to handle
+            // both a multipication and a pointer
             '*' => self.add_token(TokenType::Star),
             '!' => {
                 let token_type = if self.match_char('=') {
@@ -81,11 +95,16 @@ impl Scanner {
                 };
                 self.add_token(token_type);
             }
+            // TODO: pointers as references should also be handled at this point
+            // imagine something like a = &b;
             '&' => {
                 let token_type = if self.match_char('&') {
                     TokenType::And
                 } else {
-                    report(self.line, "Unexpected Character");
+                    self.add_error(
+                        ErrorType::UnexpectedToken,
+                        &format!("Unexpected character {c}"),
+                    );
                     TokenType::Error(format!("Unexpected character: {c}"))
                 };
                 self.add_token(token_type);
@@ -94,7 +113,11 @@ impl Scanner {
                 let token_type = if self.match_char('|') {
                     TokenType::Or
                 } else {
-                    report(self.line, "Unexpected Character");
+                    self.add_error(
+                        ErrorType::UnexpectedToken,
+                        &format!("Unexpected character {c}"),
+                    );
+
                     TokenType::Error(format!("Unexpected character: {c}"))
                 };
                 self.add_token(token_type);
@@ -137,9 +160,12 @@ impl Scanner {
                     self.add_token(TokenType::Slash)
                 };
             }
-            ' ' | '\r' | '\t' => {}
+            ' ' => {}
+            '\t' => self.column += 3,
+            '\r' => {}
             '\n' => {
                 self.line += 1;
+                self.column = 1;
             }
             '"' => self.handle_string(),
             '~' => self.add_token(TokenType::BitwiseNot),
@@ -149,7 +175,10 @@ impl Scanner {
                 } else if c.is_alphabetic() {
                     self.handle_identifier();
                 } else {
-                    report(self.line, "Unexpected Character");
+                    self.add_error(
+                        ErrorType::UnexpectedToken,
+                        &format!("Unexpected character {c}"),
+                    );
                     self.add_token(TokenType::Error(format!("Unexpected character: {c}")));
                 }
             }
@@ -175,21 +204,23 @@ impl Scanner {
         match text {
             "void" => TokenType::Void,
             "int" => TokenType::Int,
+            "char" => TokenType::Char,
+            "long" => TokenType::Long,
+            "double" => TokenType::Double,
+            "float" => TokenType::Float,
+            //TODO: Add pointer here
             "&" => TokenType::And,
             "class" => TokenType::Class,
             "else" => TokenType::Else,
             "false" => TokenType::False,
             "for" => TokenType::For,
-            "fun" => TokenType::Fun,
             "if" => TokenType::If,
             "nil" => TokenType::Nil,
             "|" => TokenType::Or,
             "print" => TokenType::Print,
             "return" => TokenType::Return,
-            "super" => TokenType::Super,
             "this" => TokenType::This,
             "true" => TokenType::True,
-            "var" => TokenType::Var,
             "while" => TokenType::While,
             _ => TokenType::Identifier(text.to_string()),
         }
@@ -224,7 +255,7 @@ impl Scanner {
             self.advance();
         }
         if self.current >= self.chars.len() {
-            report(self.line, "Undetermined String");
+            self.add_error(ErrorType::SyntaxError, "Unterminated string");
             return;
         }
         self.advance();
@@ -248,7 +279,7 @@ impl Scanner {
             }
             self.advance();
         }
-        report(self.line, "undetermined comment block");
+        self.add_error(ErrorType::SyntaxError, "Unterminated comment block");
     }
     /// matches the expected char agains the current char
     /// in the buffer and moves one step forward to account
@@ -273,6 +304,7 @@ impl Scanner {
         }
         let c = self.chars[self.current];
         self.current += 1;
+        self.column += 1;
         c
     }
 
@@ -299,13 +331,31 @@ impl Scanner {
     fn add_token(&mut self, token_type: TokenType) {
         // find the text the token is located at
         let text: String = self.chars[self.start..self.current].iter().collect();
+        // start col
         // creating a Token object and pushing it to our scanner token vec
         self.tokens.push(Token::new(
             token_type.clone(),
             text.to_string(),
             String::from(token_type),
             self.line,
+            self.start_column,
         ));
+    }
+    fn add_error(&mut self, error_type: ErrorType, message: &str) {
+        let source_line = self.get_current_line();
+        let error = CompilerError::new(error_type, self.line, self.column, message)
+            .with_source_line(source_line);
+        self.errors.push(error);
+    }
+    fn get_current_line(&self) -> &str {
+        let lines: Vec<&str> = self.source.lines().collect();
+        if self.line > 0 && self.line <= lines.len() {
+            return lines[self.line - 1];
+        }
+        ""
+    }
+    pub fn get_errors(&self) -> &[CompilerError] {
+        &self.errors
     }
 }
 
@@ -314,24 +364,37 @@ pub struct Token {
     pub type_: TokenType,
     lexeme: String,
     literal: String,
+    //TODO: do i need to remove this one?
     line: usize,
+    column: usize,
 }
 
 impl Token {
-    pub fn new(type_: TokenType, lexeme: String, literal: String, line: usize) -> Self {
+    pub fn new(
+        type_: TokenType,
+        lexeme: String,
+        literal: String,
+        line: usize,
+        column: usize,
+    ) -> Self {
         Token {
             type_,
             lexeme,
             literal,
             line,
+            column,
         }
     }
     pub fn token_type(&self) -> &TokenType {
         &self.type_
     }
-    // pub fn to_string(&self) -> String {
-    //     return format!("{} {} {}", self.type_, self.lexeme, self.literal);
-    // }
+    pub fn line(&self) -> usize {
+        self.line
+    }
+
+    pub fn column(&self) -> usize {
+        self.column
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -348,6 +411,8 @@ pub enum TokenType {
     Semicolon,
     Slash,
     Star,
+    QMark,
+    Colon,
 
     // one or two character tokens
     Bang,
@@ -364,14 +429,18 @@ pub enum TokenType {
     Identifier(String),
     String(String),
     Number(f32),
+    Pointer(Box<TokenType>),
     //keywords
     Void,
     Int,
+    Long,
+    Double,
+    Float,
+    Char,
     And,
     Class,
     Else,
     False,
-    Fun,
     If,
     For,
     Nil,
@@ -379,9 +448,7 @@ pub enum TokenType {
     Print,
     Return,
     This,
-    Super,
     True,
-    Var,
     While,
     Eof,
 
@@ -407,6 +474,8 @@ impl From<char> for TokenType {
             '=' => TokenType::Equal,
             '>' => TokenType::Greater,
             '<' => TokenType::Less,
+            '?' => TokenType::QMark,
+            ':' => TokenType::Colon,
             //TODO: for now!
             _ => {
                 report(0, &format!("Unexpected char {value}"));
@@ -429,6 +498,8 @@ impl From<TokenType> for String {
             TokenType::Semicolon => ";".to_string(),
             TokenType::Slash => "/".to_string(),
             TokenType::Star => "*".to_string(),
+            TokenType::Colon => ":".to_string(),
+            TokenType::QMark => "?".to_string(),
             TokenType::Bang => "!".to_string(),
             TokenType::BangEqual => "!=".to_string(),
             TokenType::Equal => "=".to_string(),
@@ -440,14 +511,18 @@ impl From<TokenType> for String {
             TokenType::Identifier(text) => format!("Identifier: {text}"),
             TokenType::String(text) => format!("String: {text}"),
             TokenType::Number(text) => format!("Number: {text}"),
+            TokenType::Pointer(value) => format!("Pointer: {value}"),
             TokenType::BitwiseNot => "~".to_string(),
             TokenType::Void => "void".to_string(),
             TokenType::Int => "int".to_string(),
+            TokenType::Char => "char".to_string(),
+            TokenType::Double => "double".to_string(),
+            TokenType::Float => "float".to_string(),
+            TokenType::Long => "long".to_string(),
             TokenType::And => "&".to_string(),
             TokenType::Class => "class".to_string(),
             TokenType::Else => "else".to_string(),
             TokenType::False => "false".to_string(),
-            TokenType::Fun => "function".to_string(),
             TokenType::If => "if".to_string(),
             TokenType::For => "for".to_string(),
             TokenType::Nil => "nil".to_string(),
@@ -455,9 +530,7 @@ impl From<TokenType> for String {
             TokenType::Print => "print".to_string(),
             TokenType::Return => "return".to_string(),
             TokenType::This => "this".to_string(),
-            TokenType::Super => "super".to_string(),
             TokenType::True => "true".to_string(),
-            TokenType::Var => "var".to_string(),
             TokenType::While => "while".to_string(),
             TokenType::Eof => "eof".to_string(),
             TokenType::Error(text) => format!("Error: {text}"),
@@ -478,6 +551,8 @@ impl Display for TokenType {
             Self::Semicolon => write!(f, ";"),
             Self::Slash => write!(f, "/"),
             Self::Star => write!(f, "*"),
+            Self::Colon => write!(f, ":"),
+            Self::QMark => write!(f, "?"),
             Self::Bang => write!(f, "!"),
             Self::BangEqual => write!(f, "!="),
             Self::Equal => write!(f, "="),
@@ -489,14 +564,18 @@ impl Display for TokenType {
             Self::Identifier(text) => write!(f, "Identifier: {text}"),
             Self::String(text) => write!(f, "String: {text}"),
             Self::Number(text) => write!(f, "Number: {text}"),
+            Self::Pointer(value) => write!(f, "Pointer: {value}"),
             Self::BitwiseNot => write!(f, "~"),
             Self::Void => write!(f, "void"),
             Self::Int => write!(f, "int"),
+            Self::Char => write!(f, "char"),
+            Self::Long => write!(f, "long"),
+            Self::Double => write!(f, "double"),
+            Self::Float => write!(f, "float"),
             Self::And => write!(f, "&"),
             Self::Class => write!(f, "class"),
             Self::Else => write!(f, "else"),
             Self::False => write!(f, "false"),
-            Self::Fun => write!(f, "function"),
             Self::If => write!(f, "if"),
             Self::For => write!(f, "for"),
             Self::Nil => write!(f, "Nil"),
@@ -504,9 +583,7 @@ impl Display for TokenType {
             Self::Print => write!(f, "print"),
             Self::Return => write!(f, "return"),
             Self::This => write!(f, "this"),
-            Self::Super => write!(f, "super"),
             Self::True => write!(f, "true"),
-            Self::Var => write!(f, "var"),
             Self::While => write!(f, "while"),
             Self::Eof => write!(f, "eof"),
             Self::Error(text) => write!(f, "Error: {text}"),

@@ -1,5 +1,9 @@
-use crate::lexer::{Token, TokenType};
+use crate::{
+    errors::{CompilerError, ErrorType},
+    lexer::{Token, TokenType},
+};
 
+type ParseResult<T> = Result<T, CompilerError>;
 /// a program is the first node in an AST
 /// it contains a single child which is the function
 #[derive(Debug, Clone)]
@@ -51,9 +55,15 @@ pub enum ParameterType {
     Void,
     #[allow(dead_code)]
     Int,
+    //WARNING: not implemented yet
+    Long,
+    Char,
+    Float,
+    Double,
     //TODO:
 }
 
+/// performs an action but doesnt return a value
 #[derive(Debug, Clone)]
 pub enum Statement {
     Block(Vec<Statement>),
@@ -67,6 +77,7 @@ pub enum Statement {
     //TODO:
 }
 
+/// evaluates to a value and can be used as part of other expressions
 #[derive(Debug, Clone, Default)]
 pub enum Expression {
     #[default]
@@ -85,7 +96,11 @@ pub enum Expression {
         target: String,
         value: Box<Expression>,
     },
-    //TODO:
+    TernaryOP {
+        condition: Box<Expression>,
+        true_expr: Box<Expression>,
+        false_expr: Box<Expression>,
+    }, //TODO:
 }
 
 #[derive(Debug, Clone)]
@@ -107,20 +122,38 @@ pub enum BinaryOperator {
 pub struct Parser {
     tokens: Vec<Token>,
     current: usize,
+    errors: Vec<CompilerError>,
+    source: String,
 }
 
 impl Parser {
-    pub fn new(tokens: Vec<Token>) -> Self {
-        Self { tokens, current: 0 }
+    pub fn new(tokens: Vec<Token>, source: &str) -> Self {
+        Self {
+            tokens,
+            current: 0,
+            errors: Vec::with_capacity(10),
+            source: source.to_string(),
+        }
     }
-    pub fn parse(&mut self) -> Result<Program, String> {
-        let function = self.parse_function()?;
-        Ok(Program {
-            function_def: function,
-        })
+    pub fn parse(&mut self) -> Result<Program, Vec<CompilerError>> {
+        match self.parse_function() {
+            Ok(function) => {
+                if self.errors.is_empty() {
+                    Ok(Program {
+                        function_def: function,
+                    })
+                } else {
+                    Err(self.errors.clone())
+                }
+            }
+            Err(error) => {
+                self.errors.push(error);
+                Err(self.errors.clone())
+            }
+        }
     }
     /// considering <return type> <function name>(<params>) {<statements>}
-    pub fn parse_function(&mut self) -> Result<Function, String> {
+    pub fn parse_function(&mut self) -> ParseResult<Function> {
         let return_type = self.parse_type()?;
 
         let name = self.parse_identifiers()?;
@@ -139,14 +172,19 @@ impl Parser {
         })
     }
     /// used to parse function return type
-    fn parse_type(&mut self) -> Result<ReturnType, String> {
+    fn parse_type(&mut self) -> ParseResult<ReturnType> {
         let token = self
             .peek()
-            .ok_or("unexpected end of file. Expected identifier")?;
+            .ok_or_else(|| self.error(ErrorType::UnexpectedToken, "Unexpected end of file"))?;
+
         let type_ = match token.token_type() {
             TokenType::Int => Ok(ReturnType::Int),
             TokenType::Void => Ok(ReturnType::Void),
-            _ => Err("Expected type (int or void)".to_string()),
+            TokenType::Char => Ok(ReturnType::Char),
+            TokenType::Long => Ok(ReturnType::Long),
+            TokenType::Float => Ok(ReturnType::Float),
+            TokenType::Double => Ok(ReturnType::Double),
+            _ => Err(self.error(ErrorType::TypeError, "Expected type (int or void)")),
         };
 
         self.advance();
@@ -154,20 +192,23 @@ impl Parser {
     }
     /// parses identifiers. These identifiers could be variable names,
     /// method names, and so on!
-    fn parse_identifiers(&mut self) -> Result<Identifier, String> {
-        let ident = self
-            .peek()
-            .ok_or("unexpected end of file. Expected identifier")?;
+    fn parse_identifiers(&mut self) -> ParseResult<Identifier> {
+        let ident = self.peek().ok_or_else(|| {
+            self.error(
+                ErrorType::UnexpectedToken,
+                "unexpected end of file. Expected identifier",
+            )
+        })?;
         let expression = match ident.token_type() {
             TokenType::Identifier(name) => Ok(Identifier { name: name.clone() }),
-            _ => Err("Expected identifier".to_string()),
+            _ => Err(self.error(ErrorType::SyntaxError, "Expected identifier")),
         };
         self.advance();
         expression
     }
     /// parses function parameters
     /// should be able to handle 6 parameters per method
-    fn parse_parameters(&mut self) -> Result<Vec<Parameter>, String> {
+    fn parse_parameters(&mut self) -> ParseResult<Vec<Parameter>> {
         let mut parameters = Vec::with_capacity(6);
 
         if let Some(token) = self.peek() {
@@ -185,17 +226,56 @@ impl Parser {
                 }
                 _ => {
                     //TODO:
-                    todo!()
+                    loop {
+                        let param_type = self.parse_parameter_type()?;
+                        let name = if self.check_token_type(&TokenType::Identifier("".to_string()))
+                        {
+                            Some(self.parse_identifiers()?)
+                        } else {
+                            None
+                        };
+                        parameters.push(Parameter {
+                            parameter_type: param_type,
+                            name,
+                        });
+                        if !self.check_token_type(&TokenType::Comma) {
+                            break;
+                        }
+                        self.advance();
+                        if parameters.len() > 6 {
+                            return Err(self.error(
+                                ErrorType::SemanticError,
+                                "Too many parameters (maximum 6 supported",
+                            ));
+                        }
+                    }
                 }
             }
         }
         Ok(parameters)
     }
 
+    fn parse_parameter_type(&mut self) -> ParseResult<ParameterType> {
+        let token = self
+            .peek()
+            .ok_or_else(|| self.error(ErrorType::UnexpectedToken, "Unexptected end of file"))?;
+        let param_type = match token.type_ {
+            TokenType::Int => ParameterType::Int,
+            TokenType::Void => ParameterType::Void,
+            TokenType::Char => ParameterType::Char,
+            TokenType::Long => ParameterType::Long,
+            TokenType::Float => ParameterType::Float,
+            TokenType::Double => ParameterType::Double,
+            _ => return Err(self.error(ErrorType::TypeError, "Expected parameter type")),
+        };
+        self.advance();
+        Ok(param_type)
+    }
+
     /// block statements contain what ever comes after function declaration
     /// and is inside its braces
     /// TODO: Closures
-    fn parse_block_statement(&mut self) -> Result<Statement, String> {
+    fn parse_block_statement(&mut self) -> ParseResult<Statement> {
         self.consume_type(&TokenType::LeftBrace, "Expected '{'")?;
         let mut statements = Vec::with_capacity(5);
         while !self.check_token_type(&TokenType::RightBrace) && !self.is_at_end() {
@@ -206,7 +286,7 @@ impl Parser {
     }
 
     /// parses different statements
-    fn parse_statement(&mut self) -> Result<Statement, String> {
+    fn parse_statement(&mut self) -> ParseResult<Statement> {
         if self.check_token_type(&TokenType::Return) {
             self.parse_return_statement()
         } else if self.check_token_type(&TokenType::Int) || self.check_token_type(&TokenType::Void)
@@ -220,7 +300,7 @@ impl Parser {
     }
 
     /// parses statements such as int a; or int a = 2;
-    fn parse_var_declaration(&mut self) -> Result<Statement, String> {
+    fn parse_var_declaration(&mut self) -> ParseResult<Statement> {
         let var_type = self.parse_type()?;
         let name = self.parse_identifiers()?;
 
@@ -243,7 +323,7 @@ impl Parser {
     /// return b;
     /// or
     /// return 1 && 0;
-    fn parse_return_statement(&mut self) -> Result<Statement, String> {
+    fn parse_return_statement(&mut self) -> ParseResult<Statement> {
         self.consume_type(&TokenType::Return, "Expected 'return'")?;
 
         let expr = if self.check_token_type(&TokenType::Semicolon) {
@@ -262,13 +342,13 @@ impl Parser {
     /// for now just calls parse assignment
     /// the differentiation between parse_assignment and parse_expression
     /// is done to allow parse_assignment to be recursively called
-    fn parse_expression(&mut self) -> Result<Expression, String> {
+    fn parse_expression(&mut self) -> ParseResult<Expression> {
         self.parse_assignment()
     }
 
     /// handles assignment expressions such as int a = 1;
-    fn parse_assignment(&mut self) -> Result<Expression, String> {
-        let expr = self.parse_binary_expression(0)?;
+    fn parse_assignment(&mut self) -> ParseResult<Expression> {
+        let expr = self.parse_ternary_operation()?;
 
         if self.check_token_type(&TokenType::Equal) {
             self.advance();
@@ -280,7 +360,7 @@ impl Parser {
                     value: Box::new(value),
                 })
             } else {
-                Err("Invalid assignment target".to_string())
+                Err(self.error(ErrorType::InvalidAssignment, "Invalid assignment target"))
             }
         } else {
             Ok(expr)
@@ -291,7 +371,7 @@ impl Parser {
     /// then parses the binary operators
     /// and based on operator precedence,
     /// parses the complete binary expression repeatedly
-    fn parse_binary_expression(&mut self, min_precedence: u8) -> Result<Expression, String> {
+    fn parse_binary_expression(&mut self, min_precedence: u8) -> ParseResult<Expression> {
         let mut left = self.parse_unary_expression()?;
 
         while let Some(token) = self.peek() {
@@ -327,11 +407,38 @@ impl Parser {
         Ok(left)
     }
 
+    /// parses ternary conditional expressions: condition ? true_expr : false_expr
+    /// obviously ternary operators are right associative so this parsing is done with that in mind
+    fn parse_ternary_operation(&mut self) -> ParseResult<Expression> {
+        let condition = self.parse_binary_expression(0)?;
+
+        if self.check_token_type(&TokenType::QMark) {
+            // we consume the question mark
+            self.advance();
+
+            let true_expr = self.parse_ternary_operation()?;
+            self.consume_type(&TokenType::Colon, "expected a colon (:)")?;
+            let false_expr = self.parse_ternary_operation()?;
+
+            Ok(Expression::TernaryOP {
+                condition: Box::new(condition),
+                true_expr: Box::new(true_expr),
+                false_expr: Box::new(false_expr),
+            })
+        } else {
+            Ok(condition)
+        }
+    }
     /// parses unary expressions like ~, !, -
-    fn parse_unary_expression(&mut self) -> Result<Expression, String> {
+    fn parse_unary_expression(&mut self) -> ParseResult<Expression> {
         let token = self
             .peek()
-            .ok_or("unexpected end of line, expected operation.")?
+            .ok_or_else(|| {
+                self.error(
+                    ErrorType::UnexpectedToken,
+                    "unexpected end of line, expected operation.",
+                )
+            })?
             .clone();
 
         match token.token_type() {
@@ -356,11 +463,16 @@ impl Parser {
 
     /// based on token type defined in lexer module, parses the primary tokens
     /// then matches it agains expressions and advances one token forward
-    fn parse_primary_expression(&mut self) -> Result<Expression, String> {
-        let token = self
-            .advance()
-            .ok_or("unexpected end of line, expected primary operation.")?;
-
+    fn parse_primary_expression(&mut self) -> ParseResult<Expression> {
+        let token = match self.advance() {
+            Some(token) => token,
+            None => {
+                return Err(self.error(
+                    ErrorType::UnexpectedToken,
+                    "Unexpected end of input, expected expression",
+                ));
+            }
+        };
         let expression = match token.token_type() {
             TokenType::Number(value) => Expression::Number(*value),
             TokenType::Identifier(name) => Expression::Identifier(name.clone()),
@@ -369,7 +481,9 @@ impl Parser {
                 self.consume_type(&TokenType::RightParen, "Expected ')' after expression")?;
                 expr
             }
-            _ => return Err(format!("Expected expression:{token:?}")),
+            _ => {
+                return Err(self.error(ErrorType::SyntaxError, "Unexpected token"));
+            }
         };
 
         Ok(expression)
@@ -444,11 +558,34 @@ impl Parser {
     /// takes in a token type, sees if the current token in the stream matches
     /// the tokentype in question. if yes, consumes the token and moves 1 position forward
     /// otherwise returns an error
-    fn consume_type(&mut self, token_type: &TokenType, error_msg: &str) -> Result<&Token, String> {
+    fn consume_type(&mut self, token_type: &TokenType, error_msg: &str) -> ParseResult<&Token> {
         if self.check_token_type(token_type) {
             Ok(self.advance().unwrap())
         } else {
-            Err(error_msg.to_string())
+            Err(self.error(ErrorType::MissingToken, error_msg))
         }
+    }
+    fn error(&self, error_type: ErrorType, message: &str) -> CompilerError {
+        let (line, column) = if let Some(token) = self.peek() {
+            //TODO: fix the column counter
+            (token.line(), token.column())
+        } else if let Some(token) = self.previous() {
+            (token.line(), token.column())
+        } else {
+            (1, 1)
+        };
+        let source_line = self.get_source_line(line);
+
+        CompilerError::new(error_type, line, column, message).with_source_line(&source_line)
+    }
+    fn get_source_line(&self, line_number: usize) -> String {
+        self.source
+            .lines()
+            .nth(line_number.saturating_sub(1))
+            .unwrap_or("")
+            .to_string()
+    }
+    pub fn get_errors(&self) -> &[CompilerError] {
+        &self.errors
     }
 }

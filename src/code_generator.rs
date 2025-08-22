@@ -144,18 +144,17 @@ impl AssemblyGenerator {
                     return;
                 }
 
-                // Align stack allocation based on type size
+                // align stack allocation based on type size
                 let alignment = match size {
-                    1 => 1, // char: 1-byte alignment
-                    2 => 2, // short: 2-byte alignment
-                    4 => 4, // int: 4-byte alignment
-                    8 => 8, // long/double/pointer: 8-byte alignment
+                    1 => 1, // char: 1byte alignment
+                    2 => 2, // short: 2byte alignment
+                    4 => 4, // int: 4byte alignment
+                    8 => 8, // long/double/pointer: 8byte alignment
                     _ => 8,
                 };
 
-                // Align stack offset
-                self.stack_offset =
-                    ((self.stack_offset - size as i32) / alignment as i32) * alignment as i32;
+                // align stack offset
+                self.stack_offset = ((self.stack_offset - size as i32) / alignment) * alignment;
 
                 let var_info = VariableInfo {
                     offset: self.stack_offset,
@@ -169,8 +168,9 @@ impl AssemblyGenerator {
                 if let Some(init) = initializer {
                     self.generate_expression(init);
                     self.emit(&format!(
-                        "   {} %rax, {}(%rbp)  #initializes variables {}",
+                        "   {} {}, {}(%rbp)  #initializes variables {}",
                         self.get_mov_instr(var_type),
+                        self.get_register_name(var_type),
                         self.stack_offset,
                         name.name
                     ));
@@ -194,8 +194,21 @@ impl AssemblyGenerator {
             Expression::Identifier(name) => {
                 // should first lookup the value in symbol table
                 if let Some(info) = self.symbols.get(name) {
-                    // then load it into rax
-                    self.emit(&format!("   mov {}(%rbp), %rax", info.offset));
+                    match info.var_type {
+                        ReturnType::Int => {
+                            self.emit(&format!("   movl {}(%rbp), %eax", info.offset));
+                            // sign extend 32bit to 64 bit for consistency
+                            self.emit("   movslq %eax, %rax");
+                        }
+                        ReturnType::Char => {
+                            self.emit(&format!("   movb {}(%rbp), %al", info.offset));
+                            // sign extending 8 bit to 64 bit
+                            self.emit("   movsbq %al, %rax");
+                        }
+                        _ => {
+                            self.emit(&format!("   mov {}(%rbp), %rax", info.offset));
+                        }
+                    }
                 } else {
                     // undefied
                     self.emit(&format!("   # Error: undefined variable '{name}'"));
@@ -236,8 +249,11 @@ impl AssemblyGenerator {
                 //store it in target variable
                 if let Some(info) = self.symbols.get(target) {
                     self.emit(&format!(
-                        "   mov %rax, {}(%rbp)  #assigning to variable {}",
-                        info.offset, target
+                        "   {} {}, {}(%rbp)  #assigning to variable {}",
+                        self.get_mov_instr(&info.var_type),
+                        self.get_register_name(&info.var_type),
+                        info.offset,
+                        target
                     ));
                     //now assignment expr will retrn the assigned value
                     // rax already contains it
@@ -246,6 +262,34 @@ impl AssemblyGenerator {
                         "   # Error: undefined variable '{target}' in assignment"
                     ));
                 }
+            }
+            Expression::TernaryOP {
+                condition,
+                true_expr,
+                false_expr,
+            } => {
+                let id = self.generate_label();
+                let false_label = format!("ternary_false_{id}");
+                let end_label = format!("ternary_end_{id}");
+
+                self.generate_expression(condition);
+                self.emit("    test %rax, %rax  #test ternary op");
+                self.emit(&format!(
+                    "    jz {false_label}    #jump to false branch if condition returns zero",
+                ));
+
+                // if condition is true:
+                self.generate_expression(true_expr);
+                self.emit(&format!(
+                    "    jmp {end_label}   #jump to end and skip false branch",
+                ));
+
+                // if its false:
+                self.emit(&format!("{false_label}:"));
+                self.generate_expression(false_expr);
+
+                self.emit(&format!("{end_label}:"));
+                self.emit("#end of ternary operation");
             }
             Expression::Unknown => {
                 self.emit("   # Unknown expression");
@@ -403,6 +447,23 @@ impl AssemblyGenerator {
             ReturnType::Float => 4,
             ReturnType::Double => 8,
             ReturnType::Pointer(_) => 8, // u64 on x86-64
+        }
+    }
+    fn get_register_name(&self, var_type: &ReturnType) -> &'static str {
+        match var_type {
+            // a 32 bit register
+            ReturnType::Int => "%eax",
+            // two below are 64 bits
+            ReturnType::Void => "%rax",
+            ReturnType::Long => "%rax",
+            // 8 bit register
+            ReturnType::Char => "%al",
+            // SSE reg for floats
+            ReturnType::Float => "%xmm0",
+            // SSE reg for doubles
+            ReturnType::Double => "%xmm0",
+            // a 64 bit register used for pointers
+            ReturnType::Pointer(_) => "%rax",
         }
     }
 }
