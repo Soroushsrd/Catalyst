@@ -44,7 +44,7 @@ A simple compiler written in Rust that translates C language into x86-64 assembl
 - [x] **Multiple parameter support** (currently limited to 6 due to calling convention)
 
 #### Control Flow
-- [ ] **Conditional statements** (`if`/`else`)
+- [x] **Conditional statements** (`if`/`else`)
 - [ ] **Loops** (`while`, `for`)
 - [x] **Comparison operators** (`==`, `!=`, `<`, `>`, `<=`, `>=`)
 - [x] **Logical operators** (`&&`, `||`)
