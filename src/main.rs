@@ -64,13 +64,6 @@ fn run_prompt(file_name: &str) -> Result<()> {
 }
 
 fn compile_to_exe(assembly_file: &str, output_name: &str) -> Result<()> {
-    // let output_dir = std::path::Path::new("tests");
-    // if !output_dir.exists() {
-    //     std::fs::create_dir_all(output_dir)?;
-    // }
-    //
-    // let output_path = format!("tests/{}", output_name);
-
     let assemble = std::process::Command::new("as")
         .args(["-64", assembly_file, "-o", "temp.o"])
         .status()?;

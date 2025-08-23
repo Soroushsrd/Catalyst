@@ -12,8 +12,9 @@ pub struct VariableInfo {
 pub struct AssemblyGenerator {
     output: Vec<String>,
     stack_offset: i32,
-    ///symbol -> stack offset
-    symbols: HashMap<String, VariableInfo>,
+    ///a vec of symbol -> stack offset
+    ///used to keep track of symbol scopes
+    scope_stack: Vec<HashMap<String, VariableInfo>>,
     label_counter: u32,
 }
 
@@ -22,7 +23,7 @@ impl AssemblyGenerator {
         Self {
             output: Vec::new(),
             stack_offset: 0,
-            symbols: HashMap::new(),
+            scope_stack: vec![HashMap::new()],
             label_counter: 0u32,
         }
     }
@@ -88,15 +89,13 @@ impl AssemblyGenerator {
                 // -8bytes for each 64bit value
                 // aligning to 8byte boundary for stack efficiency
                 self.stack_offset -= 8;
-                // self.symbols.insert(name.name.clone(), self.stack_offset);
-                self.symbols.insert(
-                    name.name.clone(),
-                    VariableInfo {
-                        offset: self.stack_offset,
-                        size: self.get_type_size(&ReturnType::Int),
-                        var_type: ReturnType::Int,
-                    },
-                );
+                let var = VariableInfo {
+                    offset: self.stack_offset,
+                    size: self.get_type_size(&ReturnType::Int),
+                    var_type: ReturnType::Int,
+                };
+
+                self.declare_var(&name.name, &var);
 
                 self.emit(&format!(
                     "   mov {}, {}(%rbp)",
@@ -112,9 +111,13 @@ impl AssemblyGenerator {
     fn generate_statement(&mut self, statement: &Statement) {
         match statement {
             Statement::Block(statement) => {
+                self.push_scope();
+
                 for stmt in statement {
                     self.generate_statement(stmt);
                 }
+
+                self.pop_scop();
             }
             Statement::Return(expr) => {
                 if let Some(expression) = expr {
@@ -132,6 +135,16 @@ impl AssemblyGenerator {
                 name,
                 initializer,
             } => {
+                if let Some(curr_scope) = self.scope_stack.last() {
+                    if curr_scope.contains_key(&name.name) {
+                        self.emit(&format!(
+                            "   #Error: variable {} already declared in this scope",
+                            name.name
+                        ));
+                        //TODO: Add ErrorType handling to code generation
+                        panic!("Variable {} already declared", name.name);
+                    }
+                }
                 // allocating some stack space
                 //WARNING: for now im handling everything as u64
                 // so 8 bytes is being allocated here.
@@ -162,7 +175,7 @@ impl AssemblyGenerator {
                     size,
                     var_type: var_type.clone(),
                 };
-                self.symbols.insert(name.name.clone(), var_info.clone());
+                self.declare_var(&name.name, &var_info);
 
                 self.emit(&format!("   #variables declaration: {}", name.name));
 
@@ -233,7 +246,8 @@ impl AssemblyGenerator {
             }
             Expression::Identifier(name) => {
                 // should first lookup the value in symbol table
-                if let Some(info) = self.symbols.get(name) {
+
+                if let Some(info) = self.lookup_var(name) {
                     match info.var_type {
                         ReturnType::Int => {
                             self.emit(&format!("   movl {}(%rbp), %eax", info.offset));
@@ -295,7 +309,7 @@ impl AssemblyGenerator {
                 self.generate_expression(value);
 
                 //store it in target variable
-                if let Some(info) = self.symbols.get(target) {
+                if let Some(info) = self.lookup_var(target) {
                     self.emit(&format!(
                         "   {} {}, {}(%rbp)  #assigning to variable {}",
                         self.get_mov_instr(&info.var_type),
@@ -512,6 +526,29 @@ impl AssemblyGenerator {
             ReturnType::Double => "%xmm0",
             // a 64 bit register used for pointers
             ReturnType::Pointer(_) => "%rax",
+        }
+    }
+    fn push_scope(&mut self) {
+        self.scope_stack.push(HashMap::new());
+    }
+    fn pop_scop(&mut self) {
+        if self.scope_stack.len() > 1 {
+            self.scope_stack.pop();
+        }
+    }
+    fn lookup_var(&self, name: &str) -> Option<&VariableInfo> {
+        // using .rev to look from inner most scope to outter most one
+        for scope in self.scope_stack.iter().rev() {
+            if let Some(var) = scope.get(name) {
+                return Some(var);
+            }
+        }
+        None
+    }
+
+    fn declare_var(&mut self, name: &str, var: &VariableInfo) {
+        if let Some(scope) = self.scope_stack.last_mut() {
+            scope.insert(name.to_string(), var.clone());
         }
     }
 }

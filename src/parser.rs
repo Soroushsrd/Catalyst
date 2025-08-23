@@ -291,6 +291,8 @@ impl Parser {
             self.parse_var_declaration()
         } else if self.check_token_type(&TokenType::If) {
             self.parse_if_flow()
+        } else if self.check_token_type(&TokenType::LeftBrace) {
+            self.parse_block_statement()
         } else {
             let expr = self.parse_expression()?;
             self.consume_type(&TokenType::Semicolon, "expected a semicolon")?;
@@ -313,14 +315,7 @@ impl Parser {
                 "Condition should end with a parenthesis",
             )?;
 
-            if self.check_token_type(&TokenType::LeftBrace) {
-                self.consume_type(&TokenType::RightBrace, "block should start with a brace")?;
-            }
             let then_branch = self.parse_statement()?;
-
-            if self.check_token_type(&TokenType::LeftBrace) {
-                self.consume_type(&TokenType::LeftBrace, "block should end with a brace")?;
-            }
 
             let else_branch = if self.check_token_type(&TokenType::Else) {
                 //for else
@@ -342,14 +337,17 @@ impl Parser {
     }
 
     fn is_parameter_type(&self, token_t: &TokenType) -> bool {
-        match token_t {
+        if matches!(
+            token_t,
             TokenType::Int
-            | TokenType::Void
-            | TokenType::Float
-            | TokenType::Double
-            | TokenType::Char => true,
-            _ => false,
+                | TokenType::Void
+                | TokenType::Float
+                | TokenType::Double
+                | TokenType::Char
+        ) {
+            return true;
         }
+        false
     }
 
     /// parses statements such as int a; or int a = 2;
