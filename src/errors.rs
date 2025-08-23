@@ -10,12 +10,10 @@ pub struct CompilerError {
 
 #[derive(Debug, Clone)]
 pub enum ErrorType {
-    LexicalError,
     SyntaxError,
     SemanticError,
     TypeError,
     UndefinedVariable,
-    DuplicateDefinition,
     InvalidAssignment,
     MissingToken,
     UnexpectedToken,
@@ -72,16 +70,14 @@ impl CompilerError {
     }
     fn error_code(&self) -> &str {
         match self.error_type {
-            ErrorType::LexicalError => "E001",
-            ErrorType::SyntaxError => "E002",
-            ErrorType::SemanticError => "E003",
-            ErrorType::TypeError => "E004",
-            ErrorType::UndefinedVariable => "E005",
-            ErrorType::DuplicateDefinition => "E006",
-            ErrorType::InvalidAssignment => "E007",
-            ErrorType::MissingToken => "E008",
-            ErrorType::UnexpectedToken => "E009",
-            ErrorType::InvalidOperation => "E010",
+            ErrorType::SyntaxError => "E001",
+            ErrorType::SemanticError => "E002",
+            ErrorType::TypeError => "E003",
+            ErrorType::UndefinedVariable => "E004",
+            ErrorType::InvalidAssignment => "E005",
+            ErrorType::MissingToken => "E006",
+            ErrorType::UnexpectedToken => "E007",
+            ErrorType::InvalidOperation => "E008",
         }
     }
 }
