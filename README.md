@@ -39,7 +39,7 @@ A simple compiler written in Rust that translates C language into x86-64 assembl
 
 #### Core Language Features
 - [x] **Variable declarations and assignments**
-- [ ] **Local variable scoping**
+- [x] **Local variable scoping**
 - [ ] **Function calls with argument passing**
 - [x] **Multiple parameter support** (currently limited to 6 due to calling convention)
 
@@ -51,6 +51,7 @@ A simple compiler written in Rust that translates C language into x86-64 assembl
 
 ### Advanced Features
 - [ ] **Arrays and indexing**
+- [x] **Nested Blocks**
 - [ ] **Pointers and references**
 - [ ] **Structures/records**
 - [ ] **String handling**
@@ -58,7 +59,7 @@ A simple compiler written in Rust that translates C language into x86-64 assembl
 
 ### Optimization & Tooling
 - [ ] **Basic optimizations** (constant folding, dead code elimination)
-- [ ] **Better error messages** with line numbers and suggestions
+- [x] **Better error messages** with line numbers and suggestions
 - [ ] **Debugging information generation**
 - [ ] **Standard library functions** (`printf`, etc.)
 
