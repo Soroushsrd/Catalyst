@@ -108,6 +108,8 @@ fn run(source_code: &str, file_name: &str) -> Result<()> {
                 }
             }
 
+            // println!("\nAST:");
+            // println!("{ast:#?}");
             let mut codegen = AssemblyGenerator::new();
             codegen.generate_program(&ast);
             let assembly_file_name = format!("{file_name}.s");

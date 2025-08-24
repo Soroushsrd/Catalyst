@@ -3,18 +3,25 @@ use std::io::Write;
 use std::{collections::HashMap, fs::File, io};
 
 #[derive(Debug, Clone)]
-pub struct VariableInfo {
+struct VariableInfo {
     pub offset: i32,
     pub size: usize,
     pub var_type: ReturnType,
 }
 
+#[derive(Debug, Clone)]
+struct FunctionInfo {
+    name: String,
+    return_type: ReturnType,
+    parameters: Vec<Parameter>,
+}
 pub struct AssemblyGenerator {
     output: Vec<String>,
     stack_offset: i32,
     ///a vec of symbol -> stack offset
     ///used to keep track of symbol scopes
     scope_stack: Vec<HashMap<String, VariableInfo>>,
+    function_table: HashMap<String, FunctionInfo>,
     label_counter: u32,
 }
 
@@ -24,6 +31,7 @@ impl AssemblyGenerator {
             output: Vec::new(),
             stack_offset: 0,
             scope_stack: vec![HashMap::new()],
+            function_table: HashMap::new(),
             label_counter: 0u32,
         }
     }
@@ -38,6 +46,7 @@ impl AssemblyGenerator {
     }
 
     pub fn generate_program(&mut self, program: &Program) {
+        self.create_function_table(&program.function_def);
         // assembly prologue
         self.emit(".text");
         self.emit(".global _start");
@@ -51,7 +60,77 @@ impl AssemblyGenerator {
         self.emit("    syscall");
         self.emit("");
 
-        self.generate_function(&program.function_def);
+        for function in &program.function_def {
+            self.generate_function(function);
+            self.emit("");
+        }
+    }
+
+    fn create_function_table(&mut self, functions: &[Function]) {
+        for function in functions {
+            //TODO: think of something to get rid of exessive cloning
+            self.function_table.insert(
+                function.name.name.clone(),
+                FunctionInfo {
+                    name: function.name.name.clone(),
+                    return_type: function.return_type.clone(),
+                    parameters: function.parameters.clone(),
+                },
+            );
+        }
+    }
+
+    fn generate_function_call(&mut self, name: &str, arguments: &[Expression]) {
+        if !self.function_table.contains_key(name) {
+            //TODO: better error handling
+            self.emit("    #Error: Unknown function {name}");
+            self.emit("    mov $0, %rax");
+            return;
+        }
+
+        // since we are using x86-64 conventions, we can assume that
+        // first 6 ints are gonna be stored in these registers:
+        let register = ["%rdi", "%rsi", "%rdx", "%rcx", "%r8", "%r9"];
+
+        if arguments.len() > 6 {
+            //TODO: better error handling
+            self.emit(&format!(
+                "   #Error: function {} has too many arguments",
+                name
+            ));
+            return;
+        }
+
+        // saving caller saved registers
+        for reg in &[
+            "%rax", "%rcx", "%rdx", "%rsi", "%rdi", "%r8", "%r9", "%r10", "%r11",
+        ] {
+            self.emit(&format!("    push {}", reg));
+        }
+
+        let mut arg_t = Vec::with_capacity(6);
+
+        // savign arguments on stack
+        for (i, arg) in arguments.iter().enumerate() {
+            self.generate_expression(arg);
+            self.emit(&format!("   push %rax   #save arg number {i}"));
+            arg_t.push(arg);
+        }
+
+        //popping argument sinto their registers
+        for i in (0..arguments.len()).rev() {
+            self.emit(&format!(
+                "    pop {}  #Load argument {} into register",
+                register[i], i,
+            ));
+        }
+        self.emit(&format!("   call {name}"));
+
+        // not including %rax because it contains the return code
+        for reg in &["%r11", "%r10", "%r9", "%r8", "%rdi", "%rsi", "%rdx", "%rcx"] {
+            self.emit(&format!("    pop {}", reg));
+        }
+        self.emit("    add $8, %rsp");
     }
 
     fn generate_function(&mut self, function: &Function) {
@@ -135,15 +214,15 @@ impl AssemblyGenerator {
                 name,
                 initializer,
             } => {
-                if let Some(curr_scope) = self.scope_stack.last() {
-                    if curr_scope.contains_key(&name.name) {
-                        self.emit(&format!(
-                            "   #Error: variable {} already declared in this scope",
-                            name.name
-                        ));
-                        //TODO: Add ErrorType handling to code generation
-                        panic!("Variable {} already declared", name.name);
-                    }
+                if let Some(curr_scope) = self.scope_stack.last()
+                    && curr_scope.contains_key(&name.name)
+                {
+                    self.emit(&format!(
+                        "   #Error: variable {} already declared in this scope",
+                        name.name
+                    ));
+                    eprintln!("Variable {} already declared", name.name);
+                    return;
                 }
                 // allocating some stack space
                 //WARNING: for now im handling everything as u64
@@ -158,17 +237,8 @@ impl AssemblyGenerator {
                     return;
                 }
 
-                // align stack allocation based on type size
-                let alignment = match size {
-                    1 => 1, // char: 1byte alignment
-                    2 => 2, // short: 2byte alignment
-                    4 => 4, // int: 4byte alignment
-                    8 => 8, // long/double/pointer: 8byte alignment
-                    _ => 8,
-                };
-
-                // align stack offset
-                self.stack_offset = ((self.stack_offset - size as i32) / alignment) * alignment;
+                //  using 8 bytes per variables for consistency
+                self.stack_offset -= 8;
 
                 let var_info = VariableInfo {
                     offset: self.stack_offset,
@@ -268,6 +338,9 @@ impl AssemblyGenerator {
                     self.emit(&format!("   # Error: undefined variable '{name}'"));
                     self.emit("   mov $0, %rax");
                 }
+            }
+            Expression::FunctionCall { name, arguments } => {
+                self.generate_function_call(name, arguments);
             }
             Expression::BitwiseNot(value) => {
                 self.generate_expression(value);

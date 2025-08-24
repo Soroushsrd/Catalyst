@@ -1,15 +1,39 @@
+/**
+* For future refs===> Why i used Refcell in parser implementations
+*
+* RefCell was used for interior mutability to solve the borrow checker issues
+* that arise in recursive-descent parsers. Here's why:
+*
+* 1. Recursive Nature: A recursive-descent parser makes nested method calls that need to
+*    mutate parser state (such as advancing position). this creates overlapping mutable borrows.
+*
+* 2. RefCell Solution: RefCell allows interior mutability by moving the borrow checking from
+*    compile-time to runtime. This enables us to:
+*    - Keep a clean recursive API with methods that don't need to take &mut self
+*    - Safely modify internal state through borrow() and borrow_mut()
+*    - Avoid restructuring the entire parser architecture
+*
+* 3. Trade-offs: We gain simpler code at the cost of potential runtime panics if we
+*    violate borrowing rules. We mitigate this by carefully structuring our method calls
+*    and using local variables to break up overlapping borrows.
+
+* TODO: implement alternative methods for benchmarking purposes
+* Alternative approaches would include separating mutable state into a separate structure
+* or implementing a non-recursive algorithm for expression parsing.
+*/
 use crate::{
     errors::{CompilerError, ErrorType},
     expect_token,
     lexer::{Token, TokenType},
 };
+use std::cell::RefCell;
 
 type ParseResult<T> = Result<T, CompilerError>;
 /// a program is the first node in an AST
 /// it contains a single child which is the function
 #[derive(Debug, Clone)]
 pub struct Program {
-    pub function_def: Function,
+    pub function_def: Vec<Function>,
 }
 
 /// functions consist of a name (identifier) and a
@@ -105,6 +129,13 @@ pub enum Expression {
         condition: Box<Expression>,
         true_expr: Box<Expression>,
         false_expr: Box<Expression>,
+    },
+    FunctionCall {
+        name: String,
+        // using expression instead of parameter struct
+        // because we are passing some sort of expression to
+        // a function when we call it
+        arguments: Vec<Expression>,
     }, //TODO:
 }
 
@@ -126,8 +157,8 @@ pub enum BinaryOperator {
 #[derive(Debug, Clone)]
 pub struct Parser {
     tokens: Vec<Token>,
-    current: usize,
-    errors: Vec<CompilerError>,
+    current: RefCell<usize>,
+    errors: RefCell<Vec<CompilerError>>,
     source: String,
 }
 
@@ -135,26 +166,36 @@ impl Parser {
     pub fn new(tokens: Vec<Token>, source: &str) -> Self {
         Self {
             tokens,
-            current: 0,
-            errors: Vec::with_capacity(10),
+            current: RefCell::new(0),
+            errors: RefCell::new(Vec::with_capacity(10)),
             source: source.to_string(),
         }
     }
     pub fn parse(&mut self) -> Result<Program, Vec<CompilerError>> {
-        match self.parse_function() {
-            Ok(function) => {
-                if self.errors.is_empty() {
-                    Ok(Program {
-                        function_def: function,
-                    })
-                } else {
-                    Err(self.errors.clone())
-                }
+        let mut functions = Vec::with_capacity(5);
+
+        while !self.is_at_end() {
+            match self.parse_function() {
+                Ok(function) => functions.push(function),
+                Err(e) => self.errors.borrow_mut().push(e),
             }
-            Err(error) => {
-                self.errors.push(error);
-                Err(self.errors.clone())
+        }
+
+        if self.errors.borrow().is_empty() {
+            if !functions.iter().any(|f| f.name.name == "main") {
+                self.errors.borrow_mut().push(CompilerError::new(
+                    ErrorType::SemanticError,
+                    1,
+                    1,
+                    "No main function found",
+                ));
+                return Err(self.errors.borrow().clone());
             }
+            Ok(Program {
+                function_def: functions,
+            })
+        } else {
+            Err(self.errors.borrow().clone())
         }
     }
     /// considering <return type> <function name>(<params>) {<statements>}
@@ -194,7 +235,7 @@ impl Parser {
     }
     /// parses identifiers. These identifiers could be variable names,
     /// method names, and so on!
-    fn parse_identifiers(&mut self) -> ParseResult<Identifier> {
+    fn parse_identifiers(&self) -> ParseResult<Identifier> {
         let ident = expect_token!(self, ErrorType::UnexpectedToken, "Unexpected end of file");
         let expression = match ident.token_type() {
             TokenType::Identifier(name) => Ok(Identifier { name: name.clone() }),
@@ -205,7 +246,7 @@ impl Parser {
     }
     /// parses function parameters
     /// should be able to handle 6 parameters per method
-    fn parse_parameters(&mut self) -> ParseResult<Vec<Parameter>> {
+    fn parse_parameters(&self) -> ParseResult<Vec<Parameter>> {
         let mut parameters = Vec::with_capacity(6);
 
         if let Some(token) = self.peek() {
@@ -215,44 +256,86 @@ impl Parser {
                 }
                 TokenType::Void => {
                     self.advance();
+                    if self.check_token_type(&TokenType::RightParen) {
+                        parameters.push(Parameter {
+                            parameter_type: ParameterType::Void,
+                            name: None,
+                        });
+                        return Ok(parameters);
+                    }
+                    // in case void is used a type for some identifier
+                    let name = if self.check_token_type(&TokenType::Identifier("".to_string())) {
+                        Some(self.parse_identifiers()?)
+                    } else {
+                        None
+                    };
+
                     parameters.push(Parameter {
                         parameter_type: ParameterType::Void,
-                        name: None,
+                        name,
                     });
-                    return Ok(parameters);
                 }
                 _ => {
-                    //TODO:
-                    loop {
+                    let param_type = self.parse_parameter_type()?;
+                    let name = if self.is_identifier() {
+                        Some(self.parse_identifiers()?)
+                    } else {
+                        None
+                    };
+
+                    parameters.push(Parameter {
+                        parameter_type: param_type,
+                        name,
+                    });
+
+                    while self.check_token_type(&TokenType::Comma) {
+                        self.advance();
+
+                        if parameters.len() >= 6 {
+                            return Err(self.error(ErrorType::SemanticError, "Too many parameters"));
+                        }
                         let param_type = self.parse_parameter_type()?;
-                        let name = if self.check_token_type(&TokenType::Identifier("".to_string()))
-                        {
+                        let name = if self.is_identifier() {
                             Some(self.parse_identifiers()?)
                         } else {
                             None
                         };
+
                         parameters.push(Parameter {
                             parameter_type: param_type,
                             name,
                         });
-                        if !self.check_token_type(&TokenType::Comma) {
-                            break;
-                        }
-                        self.advance();
-                        if parameters.len() > 6 {
-                            return Err(self.error(
-                                ErrorType::SemanticError,
-                                "Too many parameters (maximum 6 supported",
-                            ));
-                        }
                     }
+                    //TODO:
+                    // loop {
+                    //     let param_type = self.parse_parameter_type()?;
+                    //     let name = if matches!(token.token_type(), TokenType::Identifier(_)) {
+                    //         Some(self.parse_identifiers()?)
+                    //     } else {
+                    //         None
+                    //     };
+                    //     parameters.push(Parameter {
+                    //         parameter_type: param_type,
+                    //         name,
+                    //     });
+                    //     if !self.check_token_type(&TokenType::Comma) {
+                    //         break;
+                    //     }
+                    //     self.advance();
+                    //     if parameters.len() > 6 {
+                    //         return Err(self.error(
+                    //             ErrorType::SemanticError,
+                    //             "Too many parameters (maximum 6 supported",
+                    //         ));
+                    //     }
+                    // }
                 }
             }
         }
         Ok(parameters)
     }
 
-    fn parse_parameter_type(&mut self) -> ParseResult<ParameterType> {
+    fn parse_parameter_type(&self) -> ParseResult<ParameterType> {
         let token = expect_token!(self, ErrorType::UnexpectedToken, "Unexpected end of file");
         let param_type = match token.type_ {
             TokenType::Int => ParameterType::Int,
@@ -393,12 +476,12 @@ impl Parser {
     /// for now just calls parse assignment
     /// the differentiation between parse_assignment and parse_expression
     /// is done to allow parse_assignment to be recursively called
-    fn parse_expression(&mut self) -> ParseResult<Expression> {
+    fn parse_expression(&self) -> ParseResult<Expression> {
         self.parse_assignment()
     }
 
     /// handles assignment expressions such as int a = 1;
-    fn parse_assignment(&mut self) -> ParseResult<Expression> {
+    fn parse_assignment(&self) -> ParseResult<Expression> {
         let expr = self.parse_ternary_operation()?;
 
         if self.check_token_type(&TokenType::Equal) {
@@ -422,7 +505,7 @@ impl Parser {
     /// then parses the binary operators
     /// and based on operator precedence,
     /// parses the complete binary expression repeatedly
-    fn parse_binary_expression(&mut self, min_precedence: u8) -> ParseResult<Expression> {
+    fn parse_binary_expression(&self, min_precedence: u8) -> ParseResult<Expression> {
         let mut left = self.parse_unary_expression()?;
 
         while let Some(token) = self.peek() {
@@ -460,7 +543,7 @@ impl Parser {
 
     /// parses ternary conditional expressions: condition ? true_expr : false_expr
     /// obviously ternary operators are right associative so this parsing is done with that in mind
-    fn parse_ternary_operation(&mut self) -> ParseResult<Expression> {
+    fn parse_ternary_operation(&self) -> ParseResult<Expression> {
         let condition = self.parse_binary_expression(0)?;
 
         if self.check_token_type(&TokenType::QMark) {
@@ -481,7 +564,7 @@ impl Parser {
         }
     }
     /// parses unary expressions like ~, !, -
-    fn parse_unary_expression(&mut self) -> ParseResult<Expression> {
+    fn parse_unary_expression(&self) -> ParseResult<Expression> {
         let token =
             expect_token!(self, ErrorType::UnexpectedToken, "Unexpected end of file").clone();
 
@@ -507,7 +590,7 @@ impl Parser {
 
     /// based on token type defined in lexer module, parses the primary tokens
     /// then matches it agains expressions and advances one token forward
-    fn parse_primary_expression(&mut self) -> ParseResult<Expression> {
+    fn parse_primary_expression(&self) -> ParseResult<Expression> {
         let token = match self.advance() {
             Some(token) => token,
             None => {
@@ -519,7 +602,39 @@ impl Parser {
         };
         let expression = match token.token_type() {
             TokenType::Number(value) => Expression::Number(*value),
-            TokenType::Identifier(name) => Expression::Identifier(name.clone()),
+            TokenType::Identifier(name) => {
+                // in case we run into a function
+
+                let is_function_call = self.check_token_type(&TokenType::LeftParen);
+
+                if is_function_call {
+                    self.advance();
+                    let mut arguments = Vec::new();
+
+                    // Parse arguments
+                    let is_empty_args = self.check_token_type(&TokenType::RightParen);
+                    if !is_empty_args {
+                        loop {
+                            let arg = self.parse_expression()?;
+                            arguments.push(arg);
+
+                            let has_comma = self.check_token_type(&TokenType::Comma);
+                            if !has_comma {
+                                break;
+                            }
+                            self.advance(); // consume ','
+                        }
+                    }
+
+                    self.consume_type(&TokenType::RightParen, "Expected ')' after arguments")?;
+                    Expression::FunctionCall {
+                        name: name.clone(),
+                        arguments,
+                    }
+                } else {
+                    Expression::Identifier(name.clone())
+                }
+            }
             TokenType::LeftParen => {
                 let expr = self.parse_expression()?;
                 self.consume_type(&TokenType::RightParen, "Expected ')' after expression")?;
@@ -556,15 +671,16 @@ impl Parser {
     }
     /// returns a ref to the current token
     fn peek(&self) -> Option<&Token> {
-        self.tokens.get(self.current)
+        let current = *self.current.borrow();
+        self.tokens.get(current)
     }
 
     /// checks to see if token vector is at its end,
     /// otherwise moves the pointer one token forward
     /// and returns the previous token
-    fn advance(&mut self) -> Option<&Token> {
+    fn advance(&self) -> Option<&Token> {
         if !self.is_at_end() {
-            self.current += 1;
+            *self.current.borrow_mut() += 1;
         }
         self.previous()
     }
@@ -572,8 +688,9 @@ impl Parser {
     /// returns None if token vector is empty,
     /// otherwise returns the token at current-1 position
     fn previous(&self) -> Option<&Token> {
-        if self.current > 0 {
-            self.tokens.get(self.current - 1)
+        let current = *self.current.borrow();
+        if current > 0 {
+            self.tokens.get(current - 1)
         } else {
             None
         }
@@ -602,7 +719,7 @@ impl Parser {
     /// takes in a token type, sees if the current token in the stream matches
     /// the tokentype in question. if yes, consumes the token and moves 1 position forward
     /// otherwise returns an error
-    fn consume_type(&mut self, token_type: &TokenType, error_msg: &str) -> ParseResult<&Token> {
+    fn consume_type(&self, token_type: &TokenType, error_msg: &str) -> ParseResult<&Token> {
         if self.check_token_type(token_type) {
             Ok(self.advance().unwrap())
         } else {
@@ -628,7 +745,15 @@ impl Parser {
             .unwrap_or("")
             .to_string()
     }
-    pub fn get_errors(&self) -> &[CompilerError] {
-        &self.errors
+    pub fn get_errors(&self) -> Vec<CompilerError> {
+        self.errors.borrow().clone()
+    }
+
+    fn is_identifier(&self) -> bool {
+        if let Some(ident) = self.peek() {
+            matches!(ident.token_type(), TokenType::Identifier(_))
+        } else {
+            false
+        }
     }
 }
