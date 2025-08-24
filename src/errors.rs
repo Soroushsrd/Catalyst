@@ -9,6 +9,7 @@ pub struct CompilerError {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub enum ErrorType {
     SyntaxError,
     SemanticError,

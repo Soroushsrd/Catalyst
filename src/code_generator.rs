@@ -2,17 +2,18 @@ use crate::parser::*;
 use std::io::Write;
 use std::{collections::HashMap, fs::File, io};
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 struct VariableInfo {
     pub offset: i32,
+    #[allow(dead_code)]
     pub size: usize,
-    pub var_type: ReturnType,
+    pub var_type: Types,
 }
 
-#[derive(Debug, Clone)]
+#[allow(dead_code)]
 struct FunctionInfo {
     name: String,
-    return_type: ReturnType,
+    return_type: Types,
     parameters: Vec<Parameter>,
 }
 pub struct AssemblyGenerator {
@@ -170,8 +171,8 @@ impl AssemblyGenerator {
                 self.stack_offset -= 8;
                 let var = VariableInfo {
                     offset: self.stack_offset,
-                    size: self.get_type_size(&ReturnType::Int),
-                    var_type: ReturnType::Int,
+                    size: self.get_type_size(&Types::Int),
+                    var_type: Types::Int,
                 };
 
                 self.declare_var(&name.name, &var);
@@ -319,12 +320,12 @@ impl AssemblyGenerator {
 
                 if let Some(info) = self.lookup_var(name) {
                     match info.var_type {
-                        ReturnType::Int => {
+                        Types::Int => {
                             self.emit(&format!("   movl {}(%rbp), %eax", info.offset));
                             // sign extend 32bit to 64 bit for consistency
                             self.emit("   movslq %eax, %rax");
                         }
-                        ReturnType::Char => {
+                        Types::Char => {
                             self.emit(&format!("   movb {}(%rbp), %al", info.offset));
                             // sign extending 8 bit to 64 bit
                             self.emit("   movsbq %al, %rax");
@@ -562,43 +563,43 @@ impl AssemblyGenerator {
         self.label_counter
     }
 
-    fn get_mov_instr(&self, var_type: &ReturnType) -> &'static str {
+    fn get_mov_instr(&self, var_type: &Types) -> &'static str {
         match var_type {
-            ReturnType::Int => "movl",
-            ReturnType::Void => "movq",
-            ReturnType::Long => "movq",
-            ReturnType::Char => "movb",
-            ReturnType::Float => "movss",
-            ReturnType::Double => "movsd",
-            ReturnType::Pointer(_) => todo!("how do i handle pointers?"),
+            Types::Int => "movl",
+            Types::Void => "movq",
+            Types::Long => "movq",
+            Types::Char => "movb",
+            Types::Float => "movss",
+            Types::Double => "movsd",
+            Types::Pointer(_) => todo!("how do i handle pointers?"),
         }
     }
-    fn get_type_size(&self, var_type: &ReturnType) -> usize {
+    fn get_type_size(&self, var_type: &Types) -> usize {
         match var_type {
-            ReturnType::Int => 4,
-            ReturnType::Void => 0,
-            ReturnType::Long => 8,
-            ReturnType::Char => 1,
-            ReturnType::Float => 4,
-            ReturnType::Double => 8,
-            ReturnType::Pointer(_) => 8, // u64 on x86-64
+            Types::Int => 4,
+            Types::Void => 0,
+            Types::Long => 8,
+            Types::Char => 1,
+            Types::Float => 4,
+            Types::Double => 8,
+            Types::Pointer(_) => 8, // u64 on x86-64
         }
     }
-    fn get_register_name(&self, var_type: &ReturnType) -> &'static str {
+    fn get_register_name(&self, var_type: &Types) -> &'static str {
         match var_type {
             // a 32 bit register
-            ReturnType::Int => "%eax",
+            Types::Int => "%eax",
             // two below are 64 bits
-            ReturnType::Void => "%rax",
-            ReturnType::Long => "%rax",
+            Types::Void => "%rax",
+            Types::Long => "%rax",
             // 8 bit register
-            ReturnType::Char => "%al",
+            Types::Char => "%al",
             // SSE reg for floats
-            ReturnType::Float => "%xmm0",
+            Types::Float => "%xmm0",
             // SSE reg for doubles
-            ReturnType::Double => "%xmm0",
+            Types::Double => "%xmm0",
             // a 64 bit register used for pointers
-            ReturnType::Pointer(_) => "%rax",
+            Types::Pointer(_) => "%rax",
         }
     }
     fn push_scope(&mut self) {

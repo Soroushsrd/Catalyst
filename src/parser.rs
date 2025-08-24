@@ -45,7 +45,7 @@ pub struct Function {
     pub body: Statement,
     pub parameters: Vec<Parameter>,
     #[allow(dead_code)]
-    pub return_type: ReturnType,
+    pub return_type: Types,
 }
 
 /// represents variable names, function names,etc
@@ -55,28 +55,15 @@ pub struct Identifier {
 }
 
 #[derive(Debug, Clone)]
-pub enum ReturnType {
-    Void,
-    Int,
-
-    //WARNING: not implemented yet
-    Long,
-    Char,
-    Float,
-    Double,
-    Pointer(Box<ReturnType>),
-}
-
-#[derive(Debug, Clone)]
 pub struct Parameter {
     #[allow(dead_code)]
-    parameter_type: ParameterType,
+    parameter_type: Types,
     pub name: Option<Identifier>,
 }
 
 //WARNING: Could be merged with ReturnType enum
 #[derive(Debug, Clone)]
-pub enum ParameterType {
+pub enum Types {
     Void,
     #[allow(dead_code)]
     Int,
@@ -85,7 +72,7 @@ pub enum ParameterType {
     Char,
     Float,
     Double,
-    //TODO:
+    Pointer(Box<Types>), //TODO:
 }
 
 /// performs an action but doesnt return a value
@@ -94,7 +81,7 @@ pub enum Statement {
     Block(Vec<Statement>),
     Return(Option<Expression>),
     VarDeclaration {
-        var_type: ReturnType,
+        var_type: Types,
         name: Identifier,
         initializer: Option<Expression>,
     },
@@ -218,15 +205,15 @@ impl Parser {
         })
     }
     /// used to parse function return type
-    fn parse_type(&mut self) -> ParseResult<ReturnType> {
+    fn parse_type(&mut self) -> ParseResult<Types> {
         let token = expect_token!(self, ErrorType::UnexpectedToken, "Unexpected end of file");
         let type_ = match token.token_type() {
-            TokenType::Int => Ok(ReturnType::Int),
-            TokenType::Void => Ok(ReturnType::Void),
-            TokenType::Char => Ok(ReturnType::Char),
-            TokenType::Long => Ok(ReturnType::Long),
-            TokenType::Float => Ok(ReturnType::Float),
-            TokenType::Double => Ok(ReturnType::Double),
+            TokenType::Int => Ok(Types::Int),
+            TokenType::Void => Ok(Types::Void),
+            TokenType::Char => Ok(Types::Char),
+            TokenType::Long => Ok(Types::Long),
+            TokenType::Float => Ok(Types::Float),
+            TokenType::Double => Ok(Types::Double),
             _ => Err(self.error(ErrorType::TypeError, "Expected type (int or void)")),
         };
 
@@ -258,7 +245,7 @@ impl Parser {
                     self.advance();
                     if self.check_token_type(&TokenType::RightParen) {
                         parameters.push(Parameter {
-                            parameter_type: ParameterType::Void,
+                            parameter_type: Types::Void,
                             name: None,
                         });
                         return Ok(parameters);
@@ -271,7 +258,7 @@ impl Parser {
                     };
 
                     parameters.push(Parameter {
-                        parameter_type: ParameterType::Void,
+                        parameter_type: Types::Void,
                         name,
                     });
                 }
@@ -306,44 +293,21 @@ impl Parser {
                             name,
                         });
                     }
-                    //TODO:
-                    // loop {
-                    //     let param_type = self.parse_parameter_type()?;
-                    //     let name = if matches!(token.token_type(), TokenType::Identifier(_)) {
-                    //         Some(self.parse_identifiers()?)
-                    //     } else {
-                    //         None
-                    //     };
-                    //     parameters.push(Parameter {
-                    //         parameter_type: param_type,
-                    //         name,
-                    //     });
-                    //     if !self.check_token_type(&TokenType::Comma) {
-                    //         break;
-                    //     }
-                    //     self.advance();
-                    //     if parameters.len() > 6 {
-                    //         return Err(self.error(
-                    //             ErrorType::SemanticError,
-                    //             "Too many parameters (maximum 6 supported",
-                    //         ));
-                    //     }
-                    // }
                 }
             }
         }
         Ok(parameters)
     }
 
-    fn parse_parameter_type(&self) -> ParseResult<ParameterType> {
+    fn parse_parameter_type(&self) -> ParseResult<Types> {
         let token = expect_token!(self, ErrorType::UnexpectedToken, "Unexpected end of file");
         let param_type = match token.type_ {
-            TokenType::Int => ParameterType::Int,
-            TokenType::Void => ParameterType::Void,
-            TokenType::Char => ParameterType::Char,
-            TokenType::Long => ParameterType::Long,
-            TokenType::Float => ParameterType::Float,
-            TokenType::Double => ParameterType::Double,
+            TokenType::Int => Types::Int,
+            TokenType::Void => Types::Void,
+            TokenType::Char => Types::Char,
+            TokenType::Long => Types::Long,
+            TokenType::Float => Types::Float,
+            TokenType::Double => Types::Double,
             _ => return Err(self.error(ErrorType::TypeError, "Expected parameter type")),
         };
         self.advance();
