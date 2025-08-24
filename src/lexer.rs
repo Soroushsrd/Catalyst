@@ -1,7 +1,5 @@
 use std::fmt::Display;
 
-use tracing::error;
-
 use crate::errors::{CompilerError, ErrorType};
 
 // maximal munch: When two
@@ -332,7 +330,7 @@ impl Scanner {
         self.tokens.push(Token::new(
             token_type.clone(),
             text.to_string(),
-            String::from(token_type),
+            token_type.to_string(),
             self.line,
             self.start_column,
         ));
@@ -450,92 +448,6 @@ pub enum TokenType {
 
     // err
     Error(String),
-}
-
-impl From<char> for TokenType {
-    fn from(value: char) -> Self {
-        match value {
-            '(' => TokenType::LeftParen,
-            ')' => TokenType::RightParen,
-            '{' => TokenType::LeftBrace,
-            '}' => TokenType::RightBrace,
-            ',' => TokenType::Comma,
-            '.' => TokenType::Dot,
-            '-' => TokenType::Minus,
-            '+' => TokenType::Plus,
-            ';' => TokenType::Semicolon,
-            '/' => TokenType::Slash,
-            '*' => TokenType::Star,
-            '!' => TokenType::Bang,
-            '=' => TokenType::Equal,
-            '>' => TokenType::Greater,
-            '<' => TokenType::Less,
-            '?' => TokenType::QMark,
-            ':' => TokenType::Colon,
-            //TODO: for now!
-            _ => {
-                error!(
-                    "line: {} --> Err: {} ",
-                    0,
-                    &format!("Unexpected char {value}")
-                );
-                TokenType::Error(format!("Error: Invalid char => {value}"))
-            }
-        }
-    }
-}
-impl From<TokenType> for String {
-    fn from(value: TokenType) -> Self {
-        match value {
-            TokenType::LeftParen => "(".to_string(),
-            TokenType::RightParen => ")".to_string(),
-            TokenType::LeftBrace => "{".to_string(),
-            TokenType::RightBrace => "}".to_string(),
-            TokenType::Comma => ",".to_string(),
-            TokenType::Dot => ".".to_string(),
-            TokenType::Minus => "-".to_string(),
-            TokenType::Plus => "+".to_string(),
-            TokenType::Semicolon => ";".to_string(),
-            TokenType::Slash => "/".to_string(),
-            TokenType::Star => "*".to_string(),
-            TokenType::Colon => ":".to_string(),
-            TokenType::QMark => "?".to_string(),
-            TokenType::Bang => "!".to_string(),
-            TokenType::BangEqual => "!=".to_string(),
-            TokenType::Equal => "=".to_string(),
-            TokenType::EqualEqual => "==".to_string(),
-            TokenType::GreaterEqual => ">=".to_string(),
-            TokenType::Greater => ">".to_string(),
-            TokenType::LessEqual => "<=".to_string(),
-            TokenType::Less => "<".to_string(),
-            TokenType::Identifier(text) => format!("Identifier: {text}"),
-            TokenType::String(text) => format!("String: {text}"),
-            TokenType::Number(text) => format!("Number: {text}"),
-            TokenType::Pointer(value) => format!("Pointer: {value}"),
-            TokenType::BitwiseNot => "~".to_string(),
-            TokenType::Void => "void".to_string(),
-            TokenType::Int => "int".to_string(),
-            TokenType::Char => "char".to_string(),
-            TokenType::Double => "double".to_string(),
-            TokenType::Float => "float".to_string(),
-            TokenType::Long => "long".to_string(),
-            TokenType::And => "&".to_string(),
-            TokenType::Class => "class".to_string(),
-            TokenType::Else => "else".to_string(),
-            TokenType::False => "false".to_string(),
-            TokenType::If => "if".to_string(),
-            TokenType::For => "for".to_string(),
-            TokenType::Nil => "nil".to_string(),
-            TokenType::Or => "|".to_string(),
-            TokenType::Print => "print".to_string(),
-            TokenType::Return => "return".to_string(),
-            TokenType::This => "this".to_string(),
-            TokenType::True => "true".to_string(),
-            TokenType::While => "while".to_string(),
-            TokenType::Eof => "eof".to_string(),
-            TokenType::Error(text) => format!("Error: {text}"),
-        }
-    }
 }
 impl Display for TokenType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

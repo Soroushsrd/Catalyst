@@ -9,8 +9,6 @@ use std::{
     str::FromStr,
 };
 
-use tracing::info;
-
 use crate::{
     code_generator::AssemblyGenerator,
     lexer::{Scanner, Token},
@@ -35,7 +33,7 @@ fn main() -> Result<()> {
     match input.len() {
         2 => run_file(&input[1], file_name)?,
         1 => run_prompt(file_name)?,
-        _ => info!("Usage: Catalyst [script]"),
+        _ => println!("Usage: Catalyst [script]"),
     }
     Ok(())
 }
