@@ -18,10 +18,12 @@ struct FunctionInfo {
 }
 pub struct AssemblyGenerator {
     output: Vec<String>,
+    // tracks the current stack offset
     stack_offset: i32,
     ///a vec of symbol -> stack offset
     ///used to keep track of symbol scopes
     scope_stack: Vec<HashMap<String, VariableInfo>>,
+    // TODO: forward declaration table
     function_table: HashMap<String, FunctionInfo>,
     label_counter: u32,
 }
@@ -45,8 +47,10 @@ impl AssemblyGenerator {
         }
         Ok(())
     }
-
+    /// iterates through function defs
     pub fn generate_program(&mut self, program: &Program) {
+        //TODO: create a forward declaration table here as well and then
+        //match it against function table
         self.create_function_table(&program.function_def);
         // assembly prologue
         self.emit(".text");
@@ -56,9 +60,9 @@ impl AssemblyGenerator {
         // call main function and its return values
         self.emit("    call main");
         self.emit("    # Exit with main's return value");
-        self.emit("    mov %rax, %rdi     # Move return value to exit status");
+        self.emit("    mov %rax, %rdi     # Move return value to %rdi (exit status)");
         self.emit("    mov $60, %rax      # sys_exit");
-        self.emit("    syscall");
+        self.emit("    syscall          # invoking syscall to exit program");
         self.emit("");
 
         for function in &program.function_def {
@@ -81,6 +85,7 @@ impl AssemblyGenerator {
         }
     }
 
+    /// used to handle function calls inside a block
     fn generate_function_call(&mut self, name: &str, arguments: &[Expression]) {
         if !self.function_table.contains_key(name) {
             //TODO: better error handling
@@ -103,34 +108,41 @@ impl AssemblyGenerator {
         }
 
         // saving caller saved registers
+        // these registers are caller saved, meaning the calling function must save
+        // their values if needed after the call. so we should push these onto stack to
+        // savce their current values
         for reg in &[
             "%rax", "%rcx", "%rdx", "%rsi", "%rdi", "%r8", "%r9", "%r10", "%r11",
         ] {
             self.emit(&format!("    push {}", reg));
         }
 
-        let mut arg_t = Vec::with_capacity(6);
-
         // savign arguments on stack
         for (i, arg) in arguments.iter().enumerate() {
+            // handle each arg and push it on %rax for temp storage
             self.generate_expression(arg);
             self.emit(&format!("   push %rax   #save arg number {i}"));
-            arg_t.push(arg);
         }
 
         //popping argument sinto their registers
+        // stack is LIFO, so we should pop each value from the satck in a reverse order
+        // and save them in their own registers
         for i in (0..arguments.len()).rev() {
             self.emit(&format!(
                 "    pop {}  #Load argument {} into register",
                 register[i], i,
             ));
         }
+        //then we call the actuall function to invoke it
         self.emit(&format!("   call {name}"));
 
         // not including %rax because it contains the return code
+        // restoring registers in rev order
         for reg in &["%r11", "%r10", "%r9", "%r8", "%rdi", "%rsi", "%rdx", "%rcx"] {
             self.emit(&format!("    pop {}", reg));
         }
+        // this one is done to fix the alignment of the stack.
+        // we pushed %rax but didnt pop it, thus need to align the stack
         self.emit("    add $8, %rsp");
     }
 
@@ -139,8 +151,9 @@ impl AssemblyGenerator {
         self.emit(&format!("{}:", function.name.name));
 
         // its prologues
-        self.emit("    push %rbp");
-        self.emit("    mov %rsp, %rbp");
+        self.emit("    push %rbp    # saving callers base point on stack");
+        // rbp pointer is used to access local varables and parameters at fixed offsets
+        self.emit("    mov %rsp, %rbp   #sets up a new base pointer(frame pointer)");
 
         // reserving some stack space for
         // local variables
@@ -321,6 +334,7 @@ impl AssemblyGenerator {
                 if let Some(info) = self.lookup_var(name) {
                     match info.var_type {
                         Types::Int => {
+                            // loads the char from stack offset -8 into %eax
                             self.emit(&format!("   movl {}(%rbp), %eax", info.offset));
                             // sign extend 32bit to 64 bit for consistency
                             self.emit("   movslq %eax, %rax");
@@ -553,9 +567,9 @@ impl AssemblyGenerator {
     }
 
     fn emit_function_epilogue(&mut self) {
-        self.emit("    mov %rbp, %rsp");
-        self.emit("    pop %rbp");
-        self.emit("    ret");
+        self.emit("    mov %rbp, %rsp   #restore stack pointer to base ptr");
+        self.emit("    pop %rbp     # restore caller's base pointer");
+        self.emit("    ret          #return to caller");
     }
 
     fn generate_label(&mut self) -> u32 {

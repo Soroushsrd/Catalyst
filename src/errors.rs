@@ -38,6 +38,8 @@ impl CompilerError {
         self
     }
 
+    //TODO: how can we comeup with the best suggestions?
+    #[allow(dead_code)]
     pub fn with_suggestion(mut self, suggestion: &str) -> Self {
         self.suggestion = Some(suggestion.to_string());
         self

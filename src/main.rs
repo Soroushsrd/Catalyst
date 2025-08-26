@@ -6,6 +6,7 @@ mod parser;
 use std::{
     fs,
     io::{ErrorKind, Result},
+    path::{Path, PathBuf},
     str::FromStr,
 };
 
@@ -15,10 +16,26 @@ use crate::{
     parser::Parser,
 };
 
+//TODO: use clap for cli purposes
+
 //WARNING: Fix all string allocations
 fn main() -> Result<()> {
     let input: Vec<String> = std::env::args().collect();
-    let file_name = std::path::PathBuf::from_str(&input[1]).expect("failed to create a pathbuf");
+
+    match input.len() {
+        2 => run_file(&input[1])?,
+        _ => println!("Usage: Catalyst [filepath]"),
+    }
+    Ok(())
+}
+
+/// based on the input, extracts file name and then reads the file to a string
+/// then passes the file content to be parsed
+fn run_file(path: &str) -> Result<()> {
+    //TODO: reading the file could be optimized for larger files
+    let bytes_str = fs::read_to_string(PathBuf::from_str(path).unwrap())?;
+
+    let file_name = PathBuf::from_str(path).expect("failed to create a pathbuf");
     let file_name = match file_name
         .file_name()
         .unwrap()
@@ -30,37 +47,17 @@ fn main() -> Result<()> {
         None => "output",
     };
 
-    match input.len() {
-        2 => run_file(&input[1], file_name)?,
-        1 => run_prompt(file_name)?,
-        _ => println!("Usage: Catalyst [script]"),
-    }
-    Ok(())
-}
+    let source_path = Path::new(path).parent().unwrap_or(Path::new("."));
 
-fn run_file(path: &str, file_name: &str) -> Result<()> {
-    let bytes_str = fs::read_to_string(std::path::PathBuf::from_str(path).unwrap())?;
-    let source_path = std::path::Path::new(path);
-    let source_dir = source_path.parent().unwrap_or(std::path::Path::new("."));
-    let output_path = source_dir.join(file_name);
+    let output_path = source_path.join(file_name);
 
     run(&bytes_str, output_path.to_str().unwrap())?;
     Ok(())
 }
 
-fn run_prompt(file_name: &str) -> Result<()> {
-    let mut buf = String::new();
-    loop {
-        let n = std::io::stdin().read_line(&mut buf)?;
-        if n > 0 {
-            run(&buf, file_name)?;
-        } else {
-            break;
-        }
-    }
-    Ok(())
-}
-
+/// used as the last step to compilation
+/// takes in the path to assembly file generated and an output filename
+/// using gnu ld and as, assembles and links the final output
 fn compile_to_exe(assembly_file: &str, output_name: &str) -> Result<()> {
     let assemble = std::process::Command::new("as")
         .args(["-64", assembly_file, "-o", "temp.o"])
@@ -68,6 +65,7 @@ fn compile_to_exe(assembly_file: &str, output_name: &str) -> Result<()> {
 
     if !assemble.success() {
         println!("failed to assemble");
+        //TODO: use custom error handling
         return Err(ErrorKind::Other.into());
     }
 
@@ -80,22 +78,28 @@ fn compile_to_exe(assembly_file: &str, output_name: &str) -> Result<()> {
         return Err(ErrorKind::Other.into());
     }
 
-    // std::fs::remove_file("temp.o")?;
+    fs::remove_file("temp.o")?;
     println!("Compilation successful. output file {output_name}");
     Ok(())
 }
+/// takes in a file name and source code str
+/// first parses the source code into its tokens and using the parser module
+/// creates an abstract syntax tree. Then, the code generator will generate
+/// assembly code based on the AST and save it in the file name
 fn run(source_code: &str, file_name: &str) -> Result<()> {
     let mut scanner = Scanner::new(source_code);
     let tokens: Vec<Token> = scanner.scan_tokens();
+
     if !scanner.get_errors().is_empty() {
         for error in scanner.get_errors() {
             eprintln!("{}", error.format_error());
         }
     }
-    // println!("***TOKENS***");
-    // for token in tokens.iter() {
-    //     println!("Token: {token:?}");
-    // }
+
+    println!("***TOKENS***");
+    for token in tokens.iter() {
+        println!("Token: {token:?}");
+    }
 
     let mut parser = Parser::new(tokens, source_code);
     match parser.parse() {
@@ -106,8 +110,8 @@ fn run(source_code: &str, file_name: &str) -> Result<()> {
                 }
             }
 
-            // println!("\nAST:");
-            // println!("{ast:#?}");
+            println!("\n***AST***");
+            println!("{ast:#?}");
             let mut codegen = AssemblyGenerator::new();
             codegen.generate_program(&ast);
             let assembly_file_name = format!("{file_name}.s");

@@ -10,8 +10,11 @@ use crate::errors::{CompilerError, ErrorType};
 
 #[derive(Debug, Clone)]
 pub struct Scanner {
+    /// contains the source code chars
     chars: Vec<char>,
+    /// to keep track of error locations(lines)
     source: String,
+    /// generated tokens
     tokens: Vec<Token>,
     // to keep track of position
     start: usize,
@@ -19,6 +22,7 @@ pub struct Scanner {
     line: usize,
     column: usize,
     start_column: usize,
+    /// keeps track of errors generated while scanning
     errors: Vec<CompilerError>,
 }
 
@@ -61,9 +65,6 @@ impl Scanner {
     /// char per char. Handles chars, arithmetics,
     /// identifiers and numbers
     pub fn scan_token(&mut self) {
-        // let c = self.take_current_move_forward();
-        // let token_type = TokenType::from(c);
-        // self.add_token(token_type);
         let c = self.advance();
         match c {
             // Single-character tokens
@@ -203,14 +204,14 @@ impl Scanner {
             "double" => TokenType::Double,
             "float" => TokenType::Float,
             //TODO: Add pointer here
-            "&" => TokenType::And,
+            // "&" => TokenType::And,
             "class" => TokenType::Class,
             "else" => TokenType::Else,
             "false" => TokenType::False,
             "for" => TokenType::For,
             "if" => TokenType::If,
             "nil" => TokenType::Nil,
-            "|" => TokenType::Or,
+            // "|" => TokenType::Or,
             "print" => TokenType::Print,
             "return" => TokenType::Return,
             "this" => TokenType::This,
@@ -358,7 +359,6 @@ pub struct Token {
     pub type_: TokenType,
     lexeme: String,
     literal: String,
-    //TODO: do i need to remove this one?
     line: usize,
     column: usize,
 }
@@ -444,6 +444,7 @@ pub enum TokenType {
     This,
     True,
     While,
+    Do,
     Eof,
 
     // err
@@ -497,6 +498,7 @@ impl Display for TokenType {
             Self::This => write!(f, "this"),
             Self::True => write!(f, "true"),
             Self::While => write!(f, "while"),
+            Self::Do => write!(f, "do"),
             Self::Eof => write!(f, "eof"),
             Self::Error(text) => write!(f, "Error: {text}"),
         }
