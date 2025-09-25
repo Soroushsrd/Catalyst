@@ -1,4 +1,7 @@
-use crate::errors::{CompilerError, ErrorType};
+use crate::{
+    errors::{CompilerError, ErrorType},
+    parser::Types,
+};
 use std::fmt::Display;
 
 // maximal munch: When two
@@ -422,7 +425,7 @@ pub enum TokenType {
     Identifier(String),
     String(String),
     Number(f32),
-    Pointer(Box<TokenType>),
+    Pointer(Box<Types>),
     //keywords
     Void,
     Int,
@@ -476,7 +479,7 @@ impl Display for TokenType {
             Self::Identifier(text) => write!(f, "Identifier: {text}"),
             Self::String(text) => write!(f, "String: {text}"),
             Self::Number(text) => write!(f, "Number: {text}"),
-            Self::Pointer(value) => write!(f, "Pointer: {value}"),
+            Self::Pointer(value) => write!(f, "Pointer: {value:?}"),
             Self::BitwiseNot => write!(f, "~"),
             Self::Void => write!(f, "void"),
             Self::Int => write!(f, "int"),

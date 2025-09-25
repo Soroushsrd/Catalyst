@@ -62,7 +62,7 @@ pub struct Parameter {
 }
 
 //WARNING: Could be merged with ReturnType enum
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Types {
     Void,
     #[allow(dead_code)]
@@ -180,9 +180,9 @@ impl Parser {
     pub fn parse(&mut self) -> Result<Program, Vec<CompilerError>> {
         let mut functions = Vec::with_capacity(5);
 
-        //TODO: includes could be handled before this operation
+        // TODO: includes could be handled before this operation
 
-        //TODO: forward declaration is not yet handled. i should make sure this part can handle that
+        // TODO: forward declaration is not yet handled. i should make sure this part can handle that
         while !self.is_at_end() {
             match self.parse_function() {
                 Ok(function) => functions.push(function),
@@ -236,6 +236,7 @@ impl Parser {
             TokenType::Long => Ok(Types::Long),
             TokenType::Float => Ok(Types::Float),
             TokenType::Double => Ok(Types::Double),
+            TokenType::Pointer(ptr) => Ok(Types::Pointer(ptr.clone())),
             _ => Err(self.error(ErrorType::TypeError, "Expected type (int or void)")),
         };
 
