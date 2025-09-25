@@ -3,22 +3,25 @@ mod errors;
 mod lexer;
 mod macros;
 mod parser;
-use std::{
-    fs,
-    io::{ErrorKind, Result},
-    path::{Path, PathBuf},
-    str::FromStr,
-};
+use inkwell::context::Context;
 
 use crate::{
-    code_generator::AssemblyGenerator,
+    code_generator::LLVMCodeGenerator,
     lexer::{Scanner, Token},
     parser::Parser,
 };
 
-//TODO: use clap for cli purposes
+use std::{
+    fs,
+    io::{ErrorKind, Result},
+    path::{Path, PathBuf},
+    process::Command,
+    str::FromStr,
+};
 
-//WARNING: Fix all string allocations
+// TODO: use clap for cli purposes
+
+// WARNING: Fix all string allocations
 fn main() -> Result<()> {
     let input: Vec<String> = std::env::args().collect();
 
@@ -58,29 +61,53 @@ fn run_file(path: &str) -> Result<()> {
 /// used as the last step to compilation
 /// takes in the path to assembly file generated and an output filename
 /// using gnu ld and as, assembles and links the final output
-fn compile_to_exe(assembly_file: &str, output_name: &str) -> Result<()> {
-    let assemble = std::process::Command::new("as")
-        .args(["-64", assembly_file, "-o", "temp.o"])
-        .status()?;
+fn link_exe(object_file: &str, output_name: &str) -> Result<()> {
+    let mut linker_cmd = if cfg!(target_os = "windows") {
+        let mut cmd = Command::new("link");
+        cmd.args(["/ENTRY:main", "/SUBSYSTEM:CONSOLE"]);
+        cmd
+    } else {
+        let mut cmd = Command::new("ld");
+        cmd.args(["-e", "_start"]);
+        cmd
+    };
 
-    if !assemble.success() {
-        println!("failed to assemble");
-        //TODO: use custom error handling
+    let status = linker_cmd.args([object_file, "-o", output_name]).status()?;
+
+    if !status.success() {
+        eprintln!("Linking failed");
         return Err(ErrorKind::Other.into());
     }
 
-    let link = std::process::Command::new("ld")
-        .args(["temp.o", "-o", output_name])
-        .status()?;
-
-    if !link.success() {
-        println!("failed to link");
-        return Err(ErrorKind::Other.into());
+    // Clean up object file
+    if let Err(e) = fs::remove_file(object_file) {
+        eprintln!("Warning: Could not remove object file: {}", e);
     }
 
-    fs::remove_file("temp.o")?;
-    println!("Compilation successful. output file {output_name}");
+    println!("Compilation successful. Output: {}", output_name);
     Ok(())
+    // let assemble = std::process::Command::new("as")
+    //     .args(["-64", object_file, "-o", "temp.o"])
+    //     .status()?;
+
+    // if !assemble.success() {
+    //     println!("failed to assemble");
+    //     //TODO: use custom error handling
+    //     return Err(ErrorKind::Other.into());
+    // }
+
+    // let link = std::process::Command::new("ld")
+    //     .args(["temp.o", "-o", output_name])
+    //     .status()?;
+
+    // if !link.success() {
+    //     println!("failed to link");
+    //     return Err(ErrorKind::Other.into());
+    // }
+
+    // fs::remove_file("temp.o")?;
+    // println!("Compilation successful. output file {output_name}");
+    // Ok(())
 }
 /// takes in a file name and source code str
 /// first parses the source code into its tokens and using the parser module
@@ -108,17 +135,31 @@ fn run(source_code: &str, file_name: &str) -> Result<()> {
                 for error in parser.get_errors() {
                     eprintln!("{}", error.format_error());
                 }
+                return Err(ErrorKind::InvalidInput.into());
             }
 
             println!("\n***AST***");
             println!("{ast:#?}");
-            let mut codegen = AssemblyGenerator::new();
-            codegen.generate_program(&ast);
-            let assembly_file_name = format!("{file_name}.s");
-            if let Err(e) = codegen.compile_to_file(&assembly_file_name) {
-                println!("failed to write assembly file {e}");
+            let context = Context::create();
+            let mut codegen = LLVMCodeGenerator::new(&context, file_name);
+
+            if let Err(e) = codegen.generate_program(&ast) {
+                eprintln!("Code generation failed: {e}");
+                return Err(ErrorKind::Other.into());
             }
-            compile_to_exe(&assembly_file_name, file_name)?;
+
+            println!("\n***LLVM IR***");
+            codegen.print_ir();
+
+            let object_file_name = format!("{file_name}.o");
+            let obj_path = Path::new(&object_file_name);
+
+            if let Err(e) = codegen.compile_to_obj(obj_path) {
+                println!("failed to write assembly file {e}");
+                return Err(ErrorKind::Other.into());
+            }
+
+            link_exe(&object_file_name, file_name)?;
         }
         Err(errors) => {
             for error in errors {
