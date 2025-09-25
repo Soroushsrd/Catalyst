@@ -207,6 +207,11 @@ impl<'ctx> LLVMCodeGenerator<'ctx> {
                 self.builder
                     .build_return(None)
                     .map_err(|e| format!("failed to build return: {e}"))?;
+            } else {
+                let zero = self.get_zero_value(&function.return_type)?;
+                self.builder
+                    .build_return(Some(&zero))
+                    .map_err(|e| format!("failed to build return: {e}"))?;
             }
         }
 
@@ -437,6 +442,7 @@ impl<'ctx> LLVMCodeGenerator<'ctx> {
             BinaryOperator::And => {
                 let left_val = self.generate_expressions(left)?;
                 let left_bool = self.build_not_zero(left_val)?;
+                let left_block = self.builder.get_insert_block().unwrap();
 
                 let right_block = self
                     .context
@@ -465,14 +471,24 @@ impl<'ctx> LLVMCodeGenerator<'ctx> {
 
                 let false_val = self.context.bool_type().const_int(0, false);
 
-                phi.add_incoming(&[(&false_val, self.builder.get_insert_block().unwrap())]);
+                phi.add_incoming(&[(&false_val, left_block)]);
                 phi.add_incoming(&[(&right_bool, right_end_block)]);
 
-                Ok(phi.as_basic_value())
+                let result = self
+                    .builder
+                    .build_int_z_extend(
+                        phi.as_basic_value().into_int_value(),
+                        self.context.i32_type(),
+                        "and_to_int",
+                    )
+                    .map_err(|e| format!("failed to extend boolean: {e}"))?;
+                Ok(result.into())
+                // Ok(phi.as_basic_value())
             }
             BinaryOperator::Or => {
                 let left_val = self.generate_expressions(left)?;
                 let left_bool = self.build_not_zero(left_val)?;
+                let left_block = self.builder.get_insert_block().unwrap();
 
                 let right_block = self
                     .context
@@ -482,7 +498,7 @@ impl<'ctx> LLVMCodeGenerator<'ctx> {
                     .append_basic_block(self.current_function.unwrap(), "or_merge");
 
                 self.builder
-                    .build_conditional_branch(left_bool, right_block, merge_block)
+                    .build_conditional_branch(left_bool, merge_block, right_block)
                     .map_err(|e| format!("failed to create conditional branch: {e}"))?;
 
                 self.builder.position_at_end(right_block);
@@ -504,10 +520,21 @@ impl<'ctx> LLVMCodeGenerator<'ctx> {
                     .map_err(|e| format!("failed to build phi : {e}"))?;
 
                 let true_val = self.context.bool_type().const_int(1, false);
-                phi.add_incoming(&[(&true_val, self.builder.get_insert_block().unwrap())]);
+                phi.add_incoming(&[(&true_val, left_block)]);
                 phi.add_incoming(&[(&right_bool, right_end_block)]);
 
-                Ok(phi.as_basic_value())
+                let result = self
+                    .builder
+                    .build_int_z_extend(
+                        phi.as_basic_value().into_int_value(),
+                        self.context.i32_type(),
+                        "or_into_int",
+                    )
+                    .map_err(|e| format!("failed to extend boolean: {e}"))?;
+
+                Ok(result.into())
+
+                // Ok(phi.as_basic_value())
             }
             _ => {
                 let left_val = self.generate_expressions(left)?;
@@ -546,66 +573,102 @@ impl<'ctx> LLVMCodeGenerator<'ctx> {
                         )
                         .map_err(|e| format!("failed to build division: {e}"))?
                         .into()),
-                    BinaryOperator::Equals => Ok(self
-                        .builder
-                        .build_int_compare(
-                            IntPredicate::EQ,
-                            left_val.into_int_value(),
-                            right_val.into_int_value(),
-                            "equals",
-                        )
-                        .map_err(|e| format!("failed to build equals: {e}"))?
-                        .into()),
-                    BinaryOperator::NotEquals => Ok(self
-                        .builder
-                        .build_int_compare(
-                            IntPredicate::NE,
-                            left_val.into_int_value(),
-                            right_val.into_int_value(),
-                            "notequals",
-                        )
-                        .map_err(|e| format!("failed to build not euqls: {e}"))?
-                        .into()),
-                    BinaryOperator::Less => Ok(self
-                        .builder
-                        .build_int_compare(
-                            IntPredicate::SLT,
-                            left_val.into_int_value(),
-                            right_val.into_int_value(),
-                            "less_than",
-                        )
-                        .map_err(|e| format!("failed to build less than: {e}"))?
-                        .into()),
-                    BinaryOperator::LessEqual => Ok(self
-                        .builder
-                        .build_int_compare(
-                            IntPredicate::SLE,
-                            left_val.into_int_value(),
-                            right_val.into_int_value(),
-                            "less_equal",
-                        )
-                        .map_err(|e| format!("failed to build less equal: {e}"))?
-                        .into()),
-                    BinaryOperator::Greater => Ok(self
-                        .builder
-                        .build_int_compare(
-                            IntPredicate::SGT,
-                            left_val.into_int_value(),
-                            right_val.into_int_value(),
-                            "gt",
-                        )
-                        .map_err(|e| format!("Failed to build gt: {:?}", e))?
-                        .into()),
-                    BinaryOperator::GreaterEqual => Ok(self
-                        .builder
-                        .build_int_compare(
-                            IntPredicate::SGE,
-                            left_val.into_int_value(),
-                            right_val.into_int_value(),
-                            "ge",
-                        )
-                        .map_err(|e| format!("Failed to build ge: {:?}", e))?
-                        .into()),
+                    BinaryOperator::Equals => {
+                        let ret = self
+                            .builder
+                            .build_int_compare(
+                                IntPredicate::EQ,
+                                left_val.into_int_value(),
+                                right_val.into_int_value(),
+                                "eq",
+                            )
+                            .map_err(|e| format!("Failed to build equals: {:?}", e))?;
+                        let result = self
+                            .builder
+                            .build_int_z_extend(ret, self.context.i32_type(), "eq_into_int")
+                            .map_err(|e| format!("failed to extend boolean: {e}"))?;
+                        Ok(result.into())
+                    }
+                    BinaryOperator::NotEquals => {
+                        let ret = self
+                            .builder
+                            .build_int_compare(
+                                IntPredicate::NE,
+                                left_val.into_int_value(),
+                                right_val.into_int_value(),
+                                "ne",
+                            )
+                            .map_err(|e| format!("Failed to build ne: {:?}", e))?;
+                        let result = self
+                            .builder
+                            .build_int_z_extend(ret, self.context.i32_type(), "ne_into_int")
+                            .map_err(|e| format!("failed to extend boolean: {e}"))?;
+                        Ok(result.into())
+                    }
+                    BinaryOperator::Less => {
+                        let ret = self
+                            .builder
+                            .build_int_compare(
+                                IntPredicate::SLT,
+                                left_val.into_int_value(),
+                                right_val.into_int_value(),
+                                "lt",
+                            )
+                            .map_err(|e| format!("Failed to build Lt: {:?}", e))?;
+                        let result = self
+                            .builder
+                            .build_int_z_extend(ret, self.context.i32_type(), "lt_into_int")
+                            .map_err(|e| format!("failed to extend boolean: {e}"))?;
+                        Ok(result.into())
+                    }
+                    BinaryOperator::LessEqual => {
+                        let ret = self
+                            .builder
+                            .build_int_compare(
+                                IntPredicate::SLE,
+                                left_val.into_int_value(),
+                                right_val.into_int_value(),
+                                "le",
+                            )
+                            .map_err(|e| format!("Failed to build LE: {:?}", e))?;
+                        let result = self
+                            .builder
+                            .build_int_z_extend(ret, self.context.i32_type(), "le_into_int")
+                            .map_err(|e| format!("failed to extend boolean: {e}"))?;
+                        Ok(result.into())
+                    }
+                    BinaryOperator::Greater => {
+                        let ret = self
+                            .builder
+                            .build_int_compare(
+                                IntPredicate::SGT,
+                                left_val.into_int_value(),
+                                right_val.into_int_value(),
+                                "gt",
+                            )
+                            .map_err(|e| format!("Failed to build gt: {:?}", e))?;
+                        let result = self
+                            .builder
+                            .build_int_z_extend(ret, self.context.i32_type(), "gt_into_int")
+                            .map_err(|e| format!("failed to extend boolean: {e}"))?;
+                        Ok(result.into())
+                    }
+                    BinaryOperator::GreaterEqual => {
+                        let ret = self
+                            .builder
+                            .build_int_compare(
+                                IntPredicate::SGE,
+                                left_val.into_int_value(),
+                                right_val.into_int_value(),
+                                "ge",
+                            )
+                            .map_err(|e| format!("Failed to build ge: {:?}", e))?;
+                        let result = self
+                            .builder
+                            .build_int_z_extend(ret, self.context.i32_type(), "ge_into_int")
+                            .map_err(|e| format!("failed to extend boolean: {e}"))?;
+                        Ok(result.into())
+                    }
                     _ => unreachable!(),
                 }
             }
@@ -748,7 +811,13 @@ impl<'ctx> LLVMCodeGenerator<'ctx> {
                 "is_zero",
             )
             .map_err(|e| format!("failed to build compare: {e}"))?;
-        Ok(is_zero.into())
+
+        let result = self
+            .builder
+            .build_int_z_extend(is_zero, self.context.i32_type(), "bool_to_int")
+            .map_err(|e| format!("failed to extend boolean: {e}"))?;
+
+        Ok(result.into())
     }
 
     fn generate_unary_minus(

@@ -478,7 +478,7 @@ impl Parser {
             None
         };
 
-        let _ = self.consume_type(&TokenType::Semicolon, "expected a semicolon");
+        self.consume_type(&TokenType::Semicolon, "expected a semicolon")?;
         Ok(Statement::VarDeclaration {
             var_type,
             name,
