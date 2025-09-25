@@ -1,12 +1,19 @@
+use inkwell::builder::Builder;
+use inkwell::context::Context;
+use inkwell::module::Module;
+use inkwell::targets::{CodeModel, FileType, RelocMode, Target, TargetMachine};
+use inkwell::types::BasicType;
+use inkwell::types::BasicTypeEnum;
+use inkwell::values::{BasicValueEnum, FunctionValue, IntValue};
+use inkwell::{AddressSpace, IntPredicate, OptimizationLevel};
+
 use crate::parser::*;
-use std::io::Write;
-use std::{collections::HashMap, fs::File, io};
+use std::collections::HashMap;
+use std::path::Path;
 
 #[derive(Clone)]
-struct VariableInfo {
-    pub offset: i32,
-    #[allow(dead_code)]
-    pub size: usize,
+struct VariableInfo<'ctx> {
+    pub value: BasicValueEnum<'ctx>,
     pub var_type: Types,
 }
 
@@ -16,616 +23,815 @@ struct FunctionInfo {
     return_type: Types,
     parameters: Vec<Parameter>,
 }
-pub struct AssemblyGenerator {
-    output: Vec<String>,
-    // tracks the current stack offset
-    stack_offset: i32,
+pub struct LLVMCodeGenerator<'ctx> {
+    pub context: &'ctx Context,
+    pub module: Module<'ctx>,
+    pub builder: Builder<'ctx>,
     ///a vec of symbol -> stack offset
     ///used to keep track of symbol scopes
-    scope_stack: Vec<HashMap<String, VariableInfo>>,
+    scope_stack: Vec<HashMap<String, VariableInfo<'ctx>>>,
+    // current function being compiled
+    current_function: Option<FunctionValue<'ctx>>,
     // TODO: forward declaration table
-    function_table: HashMap<String, FunctionInfo>,
+    function_table: HashMap<String, FunctionValue<'ctx>>,
+    // label caounter for unique labels
     label_counter: u32,
 }
 
-impl AssemblyGenerator {
-    pub fn new() -> Self {
+impl<'ctx> LLVMCodeGenerator<'ctx> {
+    pub fn new(context: &'ctx Context, module_name: &str) -> Self {
+        let module = context.create_module(module_name);
+        let builder = context.create_builder();
         Self {
-            output: Vec::new(),
-            stack_offset: 0,
+            context,
+            module,
+            builder,
             scope_stack: vec![HashMap::new()],
+            current_function: None,
             function_table: HashMap::new(),
             label_counter: 0u32,
         }
     }
 
     /// prints the generated output into a file.
-    pub fn compile_to_file(&self, filename: &str) -> io::Result<()> {
-        let mut file = File::create(filename)?;
-        for line in &self.output {
-            writeln!(file, "{line}")?;
+    /// generate LLVM IR for the entire program
+    pub fn generate_program(&mut self, program: &Program) -> Result<(), String> {
+        self.declare_functions(&program.function_def)?;
+        for function in &program.function_def {
+            self.generate_function(function)?;
+        }
+
+        self.generate_start_function()?;
+        if let Err(e) = self.module.verify() {
+            return Err(format!("LLVM module verification failed: {e}"));
         }
         Ok(())
     }
-    /// iterates through function defs
-    pub fn generate_program(&mut self, program: &Program) {
-        //TODO: create a forward declaration table here as well and then
-        //match it against function table
-        self.create_function_table(&program.function_def);
-        // assembly prologue
-        self.emit(".text");
-        self.emit(".global _start");
-        self.emit("_start:");
 
-        // call main function and its return values
-        self.emit("    call main");
-        self.emit("    # Exit with main's return value");
-        self.emit("    mov %rax, %rdi     # Move return value to %rdi (exit status)");
-        self.emit("    mov $60, %rax      # sys_exit");
-        self.emit("    syscall          # invoking syscall to exit program");
-        self.emit("");
+    fn generate_start_function(&mut self) -> Result<(), String> {
+        // void _start()
+        let start_fn_type = self.context.void_type().fn_type(&[], false);
+        let start_fn = self.module.add_function("_start", start_fn_type, None);
 
-        for function in &program.function_def {
-            self.generate_function(function);
-            self.emit("");
-        }
+        let entry_block = self.context.append_basic_block(start_fn, "entry");
+        self.builder.position_at_end(entry_block);
+
+        // calling main function
+        let main_fn = self
+            .function_table
+            .get("main")
+            .ok_or("No main function found")?;
+
+        let main_result = self
+            .builder
+            .build_call(*main_fn, &[], "main_result")
+            .map_err(|e| format!("Failed to build call to main: {e}"))?;
+
+        // the return value from main (should be i32)
+        let exit_code = if let Some(return_val) = main_result.try_as_basic_value().left() {
+            // covnerting to i64 for syscall
+            self.builder
+                .build_int_z_extend(
+                    return_val.into_int_value(),
+                    self.context.i64_type(),
+                    "exit_code",
+                )
+                .map_err(|e| format!("Failed to extend exit code: {e}"))?
+        } else {
+            self.context.i64_type().const_int(0, false)
+        };
+
+        let asm_type = self.context.void_type().fn_type(
+            &[
+                self.context.i64_type().into(),
+                self.context.i64_type().into(),
+            ],
+            false,
+        );
+
+        let inline_asm = self.context.create_inline_asm(
+            asm_type,
+            "mov $0, %rax\nmov $1, %rdi\nsyscall".to_string(),
+            "r,r,~{rax},~{rdi}".to_string(),
+            true,  // has side effects
+            false, // not aligned stack
+            None,  // no dialect
+            false, // can_throw - 7th argument
+        );
+
+        let syscall_number = self.context.i64_type().const_int(60, false);
+        let args = &[syscall_number.into(), exit_code.into()];
+
+        self.builder
+            .build_indirect_call(asm_type, inline_asm, args, "exit")
+            .map_err(|e| format!("Failed to build syscall: {e}"))?;
+
+        self.builder
+            .build_unreachable()
+            .map_err(|e| format!("Failed to build unreachable: {e}"))?;
+
+        Ok(())
     }
 
-    fn create_function_table(&mut self, functions: &[Function]) {
+    fn declare_functions(&mut self, functions: &[Function]) -> Result<(), String> {
         for function in functions {
-            //TODO: think of something to get rid of exessive cloning
-            self.function_table.insert(
-                function.name.name.clone(),
-                FunctionInfo {
-                    name: function.name.name.clone(),
-                    return_type: function.return_type.clone(),
-                    parameters: function.parameters.clone(),
-                },
-            );
+            let param_types: Result<Vec<BasicTypeEnum>, String> = function
+                .parameters
+                .iter()
+                .filter_map(|p| p.name.as_ref().map(|_| &p.parameter_type))
+                .map(|t| self.llvm_type_from_ast(t))
+                .collect();
+            let param_types = param_types?.iter().map(|b| (*b).into()).collect::<Vec<_>>();
+
+            let fn_type = if matches!(function.return_type, Types::Void) {
+                self.context.void_type().fn_type(&param_types, false)
+            } else {
+                let return_types = self.llvm_type_from_ast(&function.return_type)?;
+                return_types.fn_type(&param_types, false)
+            };
+
+            let fn_value = self.module.add_function(&function.name.name, fn_type, None);
+
+            for (i, param) in function.parameters.iter().enumerate() {
+                if let Some(name) = &param.name {
+                    fn_value
+                        .get_nth_param(i as u32)
+                        .unwrap()
+                        .set_name(&name.name);
+                }
+            }
+
+            self.function_table
+                .insert(function.name.name.clone(), fn_value);
         }
+        Ok(())
     }
 
-    /// used to handle function calls inside a block
-    fn generate_function_call(&mut self, name: &str, arguments: &[Expression]) {
-        if !self.function_table.contains_key(name) {
-            //TODO: better error handling
-            self.emit("    #Error: Unknown function {name}");
-            self.emit("    mov $0, %rax");
-            return;
-        }
+    fn generate_function(&mut self, function: &Function) -> Result<(), String> {
+        let fn_value = self.function_table[&function.name.name];
+        self.current_function = Some(fn_value);
 
-        // since we are using x86-64 conventions, we can assume that
-        // first 6 ints are gonna be stored in these registers:
-        let register = ["%rdi", "%rsi", "%rdx", "%rcx", "%r8", "%r9"];
+        let entry_block = self.context.append_basic_block(fn_value, "entry");
+        self.builder.position_at_end(entry_block);
 
-        if arguments.len() > 6 {
-            //TODO: better error handling
-            self.emit(&format!(
-                "   #Error: function {} has too many arguments",
-                name
-            ));
-            return;
-        }
+        self.push_scope();
 
-        // saving caller saved registers
-        // these registers are caller saved, meaning the calling function must save
-        // their values if needed after the call. so we should push these onto stack to
-        // savce their current values
-        for reg in &[
-            "%rax", "%rcx", "%rdx", "%rsi", "%rdi", "%r8", "%r9", "%r10", "%r11",
-        ] {
-            self.emit(&format!("    push {}", reg));
-        }
+        for (i, param) in function.parameters.iter().enumerate() {
+            if let Some(name) = &param.name {
+                let param_value = fn_value.get_nth_param(i as u32).unwrap();
 
-        // savign arguments on stack
-        for (i, arg) in arguments.iter().enumerate() {
-            // handle each arg and push it on %rax for temp storage
-            self.generate_expression(arg);
-            self.emit(&format!("   push %rax   #save arg number {i}"));
-        }
+                let param_type = self.llvm_type_from_ast(&param.parameter_type)?;
+                let alloca = self
+                    .builder
+                    .build_alloca(param_type, &name.name)
+                    .map_err(|e| format!("failed to create alloca: {e}"))?;
 
-        //popping argument sinto their registers
-        // stack is LIFO, so we should pop each value from the satck in a reverse order
-        // and save them in their own registers
-        for i in (0..arguments.len()).rev() {
-            self.emit(&format!(
-                "    pop {}  #Load argument {} into register",
-                register[i], i,
-            ));
-        }
-        //then we call the actuall function to invoke it
-        self.emit(&format!("   call {name}"));
+                self.builder
+                    .build_store(alloca, param_value)
+                    .map_err(|e| format!("failed to store parameter: {e}"))?;
 
-        // not including %rax because it contains the return code
-        // restoring registers in rev order
-        for reg in &["%r11", "%r10", "%r9", "%r8", "%rdi", "%rsi", "%rdx", "%rcx"] {
-            self.emit(&format!("    pop {}", reg));
-        }
-        // this one is done to fix the alignment of the stack.
-        // we pushed %rax but didnt pop it, thus need to align the stack
-        self.emit("    add $8, %rsp");
-    }
-
-    fn generate_function(&mut self, function: &Function) {
-        // first the label:
-        self.emit(&format!("{}:", function.name.name));
-
-        // its prologues
-        self.emit("    push %rbp    # saving callers base point on stack");
-        // rbp pointer is used to access local varables and parameters at fixed offsets
-        self.emit("    mov %rsp, %rbp   #sets up a new base pointer(frame pointer)");
-
-        // reserving some stack space for
-        // local variables
-        self.emit("    sub $16, %rsp");
-
-        self.generate_parameter(&function.parameters);
-        self.generate_statement(&function.body);
-
-        //TODO: control flow analysis
-        if !last_statement_is_return(&function.body) {
-            self.emit_function_epilogue();
-        }
-    }
-    fn generate_parameter(&mut self, parameter: &[Parameter]) {
-        // since we are using x86-64 conventions, we can assume that
-        // first 6 ints are gonna be stored in these registers:
-        let register = ["%rdi", "%rsi", "%rdx", "%rcx", "%r8", "%r9"];
-
-        for (i, param) in parameter.iter().enumerate() {
-            if let Some(name) = &param.name
-                && i < register.len()
-            {
-                //WARNING: for now im just handling ints as 64 bits
-
-                // mvoing from register to stack
-                // -8bytes for each 64bit value
-                // aligning to 8byte boundary for stack efficiency
-                self.stack_offset -= 8;
-                let var = VariableInfo {
-                    offset: self.stack_offset,
-                    size: self.get_type_size(&Types::Int),
-                    var_type: Types::Int,
-                };
-
-                self.declare_var(&name.name, &var);
-
-                self.emit(&format!(
-                    "   mov {}, {}(%rbp)",
-                    register[i], self.stack_offset
-                ));
-
-                //TODO: handle the case that method has taken more than 6 inputs. some sort of
-                //error maybe ?!
+                self.declare_variable(
+                    &name.name,
+                    VariableInfo {
+                        value: alloca.into(),
+                        var_type: param.parameter_type.clone(),
+                    },
+                );
             }
         }
+
+        self.generate_statement(&function.body)?;
+
+        if !self.current_block_terminator() {
+            if matches!(function.return_type, Types::Void) {
+                self.builder
+                    .build_return(None)
+                    .map_err(|e| format!("failed to build return: {e}"))?;
+            }
+        }
+
+        self.pop_scope();
+        self.current_function = None;
+
+        Ok(())
     }
-    //TODO: break into smaller parts
-    fn generate_statement(&mut self, statement: &Statement) {
+
+    fn generate_statement(&mut self, statement: &Statement) -> Result<(), String> {
         match statement {
-            Statement::Block(statement) => {
+            Statement::Block(statements) => {
                 self.push_scope();
-
-                for stmt in statement {
-                    self.generate_statement(stmt);
+                for stmt in statements {
+                    self.generate_statement(stmt)?;
                 }
-
-                self.pop_scop();
+                self.pop_scope();
             }
             Statement::Return(expr) => {
                 if let Some(expression) = expr {
-                    self.generate_expression(expression);
+                    let value = self.generate_expressions(expression)?;
+                    self.builder
+                        .build_return(Some(&value))
+                        .map_err(|e| format!("failed to build return: {e}"))?;
                 } else {
-                    // handling void in this case
-                    self.emit("    mov $0, %rax");
+                    self.builder
+                        .build_return(None)
+                        .map_err(|e| format!("failed to build return: {e}"))?;
                 }
-
-                self.emit_function_epilogue();
             }
-            Statement::Expression(expr) => self.generate_expression(expr),
+            Statement::Expression(expr) => {
+                self.generate_expressions(expr)?;
+            }
             Statement::VarDeclaration {
                 var_type,
                 name,
                 initializer,
             } => {
-                if let Some(curr_scope) = self.scope_stack.last()
-                    && curr_scope.contains_key(&name.name)
-                {
-                    self.emit(&format!(
-                        "   #Error: variable {} already declared in this scope",
-                        name.name
-                    ));
-                    eprintln!("Variable {} already declared", name.name);
-                    return;
+                if let Some(current_scope) = self.scope_stack.last() {
+                    if current_scope.contains_key(&name.name) {
+                        return Err(format!(
+                            "variable {} already declared in this scope",
+                            name.name
+                        ));
+                    }
                 }
-                // allocating some stack space
-                //WARNING: for now im handling everything as u64
-                // so 8 bytes is being allocated here.
-                let size = self.get_type_size(var_type);
+                let llvm_type = self.llvm_type_from_ast(var_type)?;
+                let alloca = self
+                    .builder
+                    .build_alloca(llvm_type, &name.name)
+                    .map_err(|e| format!("failed to build alloca: {e}"))?;
 
-                if size == 0 {
-                    self.emit(&format!(
-                        "    # Error: Cannot declare variable of void type: {}",
-                        name.name
-                    ));
-                    return;
-                }
-
-                //  using 8 bytes per variables for consistency
-                self.stack_offset -= 8;
-
-                let var_info = VariableInfo {
-                    offset: self.stack_offset,
-                    size,
-                    var_type: var_type.clone(),
-                };
-                self.declare_var(&name.name, &var_info);
-
-                self.emit(&format!("   #variables declaration: {}", name.name));
-
-                if let Some(init) = initializer {
-                    self.generate_expression(init);
-                    self.emit(&format!(
-                        "   {} {}, {}(%rbp)  #initializes variables {}",
-                        self.get_mov_instr(var_type),
-                        self.get_register_name(var_type),
-                        self.stack_offset,
-                        name.name
-                    ));
+                if let Some(init_expr) = initializer {
+                    let init_value = self.generate_expressions(init_expr)?;
+                    self.builder
+                        .build_store(alloca, init_value)
+                        .map_err(|e| format!("failed to store initial value: {e}"))?;
                 } else {
-                    self.emit(&format!(
-                        "   {} $0, {}(%rbp)   #initializes variables {} to zero",
-                        self.get_mov_instr(var_type),
-                        self.stack_offset,
-                        name.name
-                    ));
+                    let zero = self.get_zero_value(var_type)?;
+                    self.builder
+                        .build_store(alloca, zero)
+                        .map_err(|e| format!("failed to store zero value: {e}"))?;
                 }
+
+                self.declare_variable(
+                    &name.name,
+                    VariableInfo {
+                        value: alloca.into(),
+                        var_type: var_type.clone(),
+                    },
+                );
             }
             Statement::If {
                 condition,
                 then_branch,
                 else_branch,
             } => {
-                let id = self.generate_label();
-                let else_label = format!("if_else_{}", id);
-                let end_label = format!("if_end_{}", id);
+                let condition_value = self.generate_expressions(condition)?;
+                let condition_bool = self.build_not_zero(condition_value)?;
 
-                self.generate_expression(condition);
-                self.emit("    test %rax, %rax    # Test if condition");
+                let then_block = self
+                    .context
+                    .append_basic_block(self.current_function.unwrap(), "then");
+                let else_block = self
+                    .context
+                    .append_basic_block(self.current_function.unwrap(), "else");
+                let merge_block = self
+                    .context
+                    .append_basic_block(self.current_function.unwrap(), "merge");
 
-                if else_branch.is_some() {
-                    self.emit(&format!(
-                        "    jz {}              # Jump to else branch if condition is false",
-                        else_label
-                    ));
+                self.builder
+                    .build_conditional_branch(condition_bool, then_block, else_block)
+                    .map_err(|e| format!("Failed to build conditional branch: {:?}", e))?;
 
-                    self.generate_statement(then_branch);
-                    self.emit(&format!(
-                        "    jmp {}             # Jump to end, skip else branch",
-                        end_label
-                    ));
-
-                    self.emit(&format!("{}:", else_label));
-                    self.generate_statement(else_branch.as_ref().unwrap());
-
-                    self.emit(&format!("{}:", end_label));
-                } else {
-                    self.emit(&format!(
-                        "    jz {}              # Jump to end if condition is false",
-                        end_label
-                    ));
-
-                    self.generate_statement(then_branch);
-
-                    self.emit(&format!("{}:", end_label));
+                self.builder.position_at_end(then_block);
+                self.generate_statement(then_branch)?;
+                if !self.current_block_terminator() {
+                    self.builder
+                        .build_unconditional_branch(merge_block)
+                        .map_err(|e| format!("Failed to build branch: {:?}", e))?;
                 }
+
+                self.builder.position_at_end(else_block);
+                if let Some(else_stmt) = else_branch {
+                    self.generate_statement(else_stmt)?;
+                }
+                if !self.current_block_terminator() {
+                    self.builder
+                        .build_unconditional_branch(merge_block)
+                        .map_err(|e| format!("Failed to build branch: {:?}", e))?;
+                }
+
+                self.builder.position_at_end(merge_block);
+            }
+
+            Statement::While {
+                condition,
+                then_branch,
+            } => {
+                let loop_cond = self
+                    .context
+                    .append_basic_block(self.current_function.unwrap(), "loop_cond");
+                let loop_body = self
+                    .context
+                    .append_basic_block(self.current_function.unwrap(), "loop_body");
+                let loop_end = self
+                    .context
+                    .append_basic_block(self.current_function.unwrap(), "loop_end");
+
+                self.builder
+                    .build_unconditional_branch(loop_cond)
+                    .map_err(|e| format!("Failed to build branch: {:?}", e))?;
+
+                self.builder.position_at_end(loop_cond);
+                let condition_value = self.generate_expressions(condition)?;
+                let condition_bool = self.build_not_zero(condition_value)?;
+                self.builder
+                    .build_conditional_branch(condition_bool, loop_body, loop_end)
+                    .map_err(|e| format!("Failed to build conditional branch: {:?}", e))?;
+
+                self.builder.position_at_end(loop_body);
+                self.generate_statement(then_branch)?;
+                if !self.current_block_terminator() {
+                    self.builder
+                        .build_unconditional_branch(loop_cond)
+                        .map_err(|e| format!("Failed to build branch: {:?}", e))?;
+                }
+
+                self.builder.position_at_end(loop_end);
+            }
+
+            Statement::DoWhile { body, condition } => {
+                let loop_body = self
+                    .context
+                    .append_basic_block(self.current_function.unwrap(), "do_body");
+                let loop_cond = self
+                    .context
+                    .append_basic_block(self.current_function.unwrap(), "do_cond");
+                let loop_end = self
+                    .context
+                    .append_basic_block(self.current_function.unwrap(), "do_end");
+
+                self.builder
+                    .build_unconditional_branch(loop_body)
+                    .map_err(|e| format!("Failed to build branch: {:?}", e))?;
+
+                self.builder.position_at_end(loop_body);
+                self.generate_statement(body)?;
+                if !self.current_block_terminator() {
+                    self.builder
+                        .build_unconditional_branch(loop_cond)
+                        .map_err(|e| format!("Failed to build branch: {:?}", e))?;
+                }
+
+                self.builder.position_at_end(loop_cond);
+                let condition_value = self.generate_expressions(condition)?;
+                let condition_bool = self.build_not_zero(condition_value)?;
+                self.builder
+                    .build_conditional_branch(condition_bool, loop_body, loop_end)
+                    .map_err(|e| format!("Failed to build conditional branch: {:?}", e))?;
+
+                self.builder.position_at_end(loop_end);
             }
         }
+        Ok(())
     }
-    fn generate_expression(&mut self, expression: &Expression) {
-        match expression {
-            Expression::Number(value) => {
-                // we can load the value into the return register
-                self.emit(&format!("    mov ${}, %rax", *value as i32));
-            }
-            Expression::Identifier(name) => {
-                // should first lookup the value in symbol table
 
-                if let Some(info) = self.lookup_var(name) {
-                    match info.var_type {
-                        Types::Int => {
-                            // loads the char from stack offset -8 into %eax
-                            self.emit(&format!("   movl {}(%rbp), %eax", info.offset));
-                            // sign extend 32bit to 64 bit for consistency
-                            self.emit("   movslq %eax, %rax");
-                        }
-                        Types::Char => {
-                            self.emit(&format!("   movb {}(%rbp), %al", info.offset));
-                            // sign extending 8 bit to 64 bit
-                            self.emit("   movsbq %al, %rax");
-                        }
-                        _ => {
-                            self.emit(&format!("   mov {}(%rbp), %rax", info.offset));
-                        }
-                    }
-                } else {
-                    // undefied
-                    self.emit(&format!("   # Error: undefined variable '{name}'"));
-                    self.emit("   mov $0, %rax");
-                }
-            }
-            Expression::FunctionCall { name, arguments } => {
-                self.generate_function_call(name, arguments);
-            }
-            Expression::BitwiseNot(value) => {
-                self.generate_expression(value);
-                self.emit("    not %rax        #Bitwise Not op");
-            }
-            Expression::UnaryMinus(expr) => {
-                self.generate_expression(expr);
-                //negate the results
-                self.emit("    neg %rax           # Unary minus operation");
-            }
-            Expression::LogicalNot(expr) => {
-                self.generate_expression(expr);
-                self.emit("    test %rax, %rax    # Test if value is zero");
-                self.emit("    setz %al           # Set AL to 1 if zero, 0 if non-zero");
-                self.emit("    movzbl %al, %eax   # Zero-extend AL to EAX");
-            }
+    /// generate llvm IR for expressions
+    fn generate_expressions(
+        &mut self,
+        expression: &Expression,
+    ) -> Result<BasicValueEnum<'ctx>, String> {
+        match expression {
+            Expression::Number(value) => Ok(self
+                .context
+                .i32_type()
+                .const_int(*value as u64, false)
+                .into()),
+            Expression::Identifier(ident) => self.generate_identifier(ident),
             Expression::Binary {
                 left,
                 operator,
                 right,
-            } => match operator {
-                BinaryOperator::And => {
-                    self.emit_logical_and(left, right);
-                }
-                BinaryOperator::Or => {
-                    self.emit_logical_or(left, right);
-                }
-                _ => {
-                    self.generate_expression(left);
-                    self.emit("    push %rax       # Save left operatnd");
-                    self.generate_expression(right);
-                    self.emit("    pop %rcx        # Restore left operand to %rcx");
-
-                    self.handle_binops(left, right, operator);
-                }
-            },
-            Expression::Assignment { target, value } => {
-                // handle the value
-                self.generate_expression(value);
-
-                //store it in target variable
-                if let Some(info) = self.lookup_var(target) {
-                    self.emit(&format!(
-                        "   {} {}, {}(%rbp)  #assigning to variable {}",
-                        self.get_mov_instr(&info.var_type),
-                        self.get_register_name(&info.var_type),
-                        info.offset,
-                        target
-                    ));
-                    //now assignment expr will retrn the assigned value
-                    // rax already contains it
-                } else {
-                    self.emit(&format!(
-                        "   # Error: undefined variable '{target}' in assignment"
-                    ));
-                }
+            } => self.generate_binary_op(left, operator, right),
+            Expression::UnaryMinus(expr) => self.generate_unary_minus(expr),
+            Expression::LogicalNot(expr) => self.generate_logical_not(expr),
+            Expression::BitwiseNot(expr) => self.generate_bitwise_not(expr),
+            Expression::Assignment { target, value } => self.generate_assignment(target, value),
+            Expression::FunctionCall { name, arguments } => {
+                self.generate_function_call(name, arguments)
             }
             Expression::TernaryOP {
                 condition,
                 true_expr,
                 false_expr,
-            } => {
-                let id = self.generate_label();
-                let false_label = format!("ternary_false_{id}");
-                let end_label = format!("ternary_end_{id}");
-
-                self.generate_expression(condition);
-                self.emit("    test %rax, %rax  #test ternary op");
-                self.emit(&format!(
-                    "    jz {false_label}    #jump to false branch if condition returns zero",
-                ));
-
-                // if condition is true:
-                self.generate_expression(true_expr);
-                self.emit(&format!(
-                    "    jmp {end_label}   #jump to end and skip false branch",
-                ));
-
-                // if its false:
-                self.emit(&format!("{false_label}:"));
-                self.generate_expression(false_expr);
-
-                self.emit(&format!("{end_label}:"));
-                self.emit("#end of ternary operation");
-            }
-            Expression::Unknown => {
-                self.emit("   # Unknown expression");
-                self.emit("   mov $0, %rax");
-            }
+            } => self.generate_ternary_op(condition, true_expr, false_expr),
+            Expression::Unknown => Ok(self.context.i32_type().const_int(0, false).into()),
         }
     }
 
-    fn handle_binops(&mut self, left: &Expression, right: &Expression, operator: &BinaryOperator) {
+    fn generate_binary_op(
+        &mut self,
+        left: &Box<Expression>,
+        operator: &BinaryOperator,
+        right: &Box<Expression>,
+    ) -> Result<BasicValueEnum<'ctx>, String> {
         match operator {
-            BinaryOperator::Add => {
-                self.emit("    add %rcx, %rax");
+            BinaryOperator::And => {
+                let left_val = self.generate_expressions(left)?;
+                let left_bool = self.build_not_zero(left_val)?;
+
+                let right_block = self
+                    .context
+                    .append_basic_block(self.current_function.unwrap(), "and_right");
+                let merge_block = self
+                    .context
+                    .append_basic_block(self.current_function.unwrap(), "and_merge");
+                self.builder
+                    .build_conditional_branch(left_bool, right_block, merge_block)
+                    .map_err(|e| format!("failed to build conditional branch: {e}"))?;
+
+                self.builder.position_at_end(right_block);
+
+                let right_val = self.generate_expressions(right)?;
+                let right_bool = self.build_not_zero(right_val)?;
+                self.builder
+                    .build_unconditional_branch(merge_block)
+                    .map_err(|e| format!("failed to build branch: {e}"))?;
+                let right_end_block = self.builder.get_insert_block().unwrap();
+
+                self.builder.position_at_end(merge_block);
+                let phi = self
+                    .builder
+                    .build_phi(self.context.bool_type(), "and_result")
+                    .map_err(|e| format!("failed to build phi: {e}"))?;
+
+                let false_val = self.context.bool_type().const_int(0, false);
+
+                phi.add_incoming(&[(&false_val, self.builder.get_insert_block().unwrap())]);
+                phi.add_incoming(&[(&right_bool, right_end_block)]);
+
+                Ok(phi.as_basic_value())
             }
-            BinaryOperator::Subtract => {
-                self.emit("    sub %rax, %rcx");
-                self.emit("    mov %rcx, %rax");
+            BinaryOperator::Or => {
+                let left_val = self.generate_expressions(left)?;
+                let left_bool = self.build_not_zero(left_val)?;
+
+                let right_block = self
+                    .context
+                    .append_basic_block(self.current_function.unwrap(), "or_right");
+                let merge_block = self
+                    .context
+                    .append_basic_block(self.current_function.unwrap(), "or_merge");
+
+                self.builder
+                    .build_conditional_branch(left_bool, right_block, merge_block)
+                    .map_err(|e| format!("failed to create conditional branch: {e}"))?;
+
+                self.builder.position_at_end(right_block);
+
+                let right_val = self.generate_expressions(right)?;
+                let right_bool = self.build_not_zero(right_val)?;
+
+                self.builder
+                    .build_unconditional_branch(merge_block)
+                    .map_err(|e| format!("failed to create unconditional branch: {e}"))?;
+
+                let right_end_block = self.builder.get_insert_block().unwrap();
+
+                self.builder.position_at_end(merge_block);
+
+                let phi = self
+                    .builder
+                    .build_phi(self.context.bool_type(), "or_result")
+                    .map_err(|e| format!("failed to build phi : {e}"))?;
+
+                let true_val = self.context.bool_type().const_int(1, false);
+                phi.add_incoming(&[(&true_val, self.builder.get_insert_block().unwrap())]);
+                phi.add_incoming(&[(&right_bool, right_end_block)]);
+
+                Ok(phi.as_basic_value())
             }
-            BinaryOperator::Multiply => {
-                self.emit("    imul %rcx, %rax    # Multiply: left * right");
+            _ => {
+                let left_val = self.generate_expressions(left)?;
+                let right_val = self.generate_expressions(right)?;
+
+                match operator {
+                    BinaryOperator::Add => Ok(self
+                        .builder
+                        .build_int_add(left_val.into_int_value(), right_val.into_int_value(), "add")
+                        .map_err(|e| format!("failed to build add: {e}"))?
+                        .into()),
+                    BinaryOperator::Subtract => Ok(self
+                        .builder
+                        .build_int_sub(
+                            left_val.into_int_value(),
+                            right_val.into_int_value(),
+                            "subtract",
+                        )
+                        .map_err(|e| format!("failed to build subtract: {e}"))?
+                        .into()),
+                    BinaryOperator::Multiply => Ok(self
+                        .builder
+                        .build_int_mul(
+                            left_val.into_int_value(),
+                            right_val.into_int_value(),
+                            "multiply",
+                        )
+                        .map_err(|e| format!("failed to build multiplication: {e}"))?
+                        .into()),
+                    BinaryOperator::Divide => Ok(self
+                        .builder
+                        .build_int_signed_div(
+                            left_val.into_int_value(),
+                            right_val.into_int_value(),
+                            "divide",
+                        )
+                        .map_err(|e| format!("failed to build division: {e}"))?
+                        .into()),
+                    BinaryOperator::Equals => Ok(self
+                        .builder
+                        .build_int_compare(
+                            IntPredicate::EQ,
+                            left_val.into_int_value(),
+                            right_val.into_int_value(),
+                            "equals",
+                        )
+                        .map_err(|e| format!("failed to build equals: {e}"))?
+                        .into()),
+                    BinaryOperator::NotEquals => Ok(self
+                        .builder
+                        .build_int_compare(
+                            IntPredicate::NE,
+                            left_val.into_int_value(),
+                            right_val.into_int_value(),
+                            "notequals",
+                        )
+                        .map_err(|e| format!("failed to build not euqls: {e}"))?
+                        .into()),
+                    BinaryOperator::Less => Ok(self
+                        .builder
+                        .build_int_compare(
+                            IntPredicate::SLT,
+                            left_val.into_int_value(),
+                            right_val.into_int_value(),
+                            "less_than",
+                        )
+                        .map_err(|e| format!("failed to build less than: {e}"))?
+                        .into()),
+                    BinaryOperator::LessEqual => Ok(self
+                        .builder
+                        .build_int_compare(
+                            IntPredicate::SLE,
+                            left_val.into_int_value(),
+                            right_val.into_int_value(),
+                            "less_equal",
+                        )
+                        .map_err(|e| format!("failed to build less equal: {e}"))?
+                        .into()),
+                    BinaryOperator::Greater => Ok(self
+                        .builder
+                        .build_int_compare(
+                            IntPredicate::SGT,
+                            left_val.into_int_value(),
+                            right_val.into_int_value(),
+                            "gt",
+                        )
+                        .map_err(|e| format!("Failed to build gt: {:?}", e))?
+                        .into()),
+                    BinaryOperator::GreaterEqual => Ok(self
+                        .builder
+                        .build_int_compare(
+                            IntPredicate::SGE,
+                            left_val.into_int_value(),
+                            right_val.into_int_value(),
+                            "ge",
+                        )
+                        .map_err(|e| format!("Failed to build ge: {:?}", e))?
+                        .into()),
+                    _ => unreachable!(),
+                }
             }
-            BinaryOperator::Divide => {
-                // for division: dividend in %rax, divisor in register
-                //we need: %rax = %rcx / %rax  (left / right)
-                self.emit("    mov %rax, %rbx     # Save right operand (divisor) in %rbx");
-                self.emit("    mov %rcx, %rax     # Move left operand (dividend) to %rax");
-                self.emit("    cqo                # Sign extend %rax to %rdx:%rax");
-                self.emit("    idiv %rbx          # Divide %rdx:%rax by %rbx, result in %rax");
-            }
-            BinaryOperator::Or => self.emit_logical_or(left, right),
-            BinaryOperator::And => self.emit_logical_and(left, right),
-            BinaryOperator::Equals => self.emit_comparison("je", "eq"),
-            BinaryOperator::NotEquals => self.emit_comparison("jne", "neq"),
-            BinaryOperator::Greater => self.emit_comparison("jg", "gt"),
-            BinaryOperator::GreaterEqual => self.emit_comparison("jge", "ge"),
-            BinaryOperator::Less => self.emit_comparison("jl", "lt"),
-            BinaryOperator::LessEqual => self.emit_comparison("jle", "le"),
         }
     }
 
-    fn emit_logical_or(&mut self, left: &Expression, right: &Expression) {
-        self.generate_expression(left);
-        self.emit("    test %rax, %rax    # Test left operand");
+    fn generate_identifier(&mut self, ident: &str) -> Result<BasicValueEnum<'ctx>, String> {
+        if let Some(var_info) = self.lookup_variable(ident) {
+            let var_type = var_info.var_type.clone();
+            let ptr_value = var_info.value.into_pointer_value();
+            let llvm_type = self.llvm_type_from_ast(&var_type)?;
 
-        // Create unique labels for this OR operation
-        let true_label = format!("or_true_{}", self.generate_label());
-        let end_label = format!("or_end_{}", self.generate_label());
-        // if left is true (non-zero), jump to true_label
-        self.emit(&format!(
-            "    jnz {true_label}         # Jump if left is true"
-        ));
-
-        // left is false, evaluate right part
-        self.generate_expression(right);
-        self.emit("    test %rax, %rax    # Test right operand");
-        self.emit(&format!(
-            "    jnz {true_label}         # Jump if right is true"
-        ));
-
-        // if both of them are false, result is 0
-        self.emit("    mov $0, %rax       # Both operands false");
-        self.emit(&format!("    jmp {end_label}         # Jump to end"));
-
-        // true case-> result is 1
-        self.emit(&format!("{true_label}:"));
-        self.emit("    mov $1, %rax       # Result is true");
-
-        self.emit(&format!("{end_label}:"));
-    }
-
-    fn emit_logical_and(&mut self, left: &Expression, right: &Expression) {
-        // Generate left operand
-        self.generate_expression(left);
-        self.emit("    test %rax, %rax    # Test left operand");
-
-        let false_label = format!("and_false_{}", self.generate_label());
-        let end_label = format!("and_end_{}", self.generate_label());
-
-        // left is false (0), jump to false_label
-        self.emit(&format!(
-            "    jz {false_label}          # Jump if left is false"
-        ));
-
-        // left is true, evaluate right operand
-        self.generate_expression(right);
-        self.emit("    test %rax, %rax    # Test right operand");
-        self.emit(&format!(
-            "    jz {false_label}          # Jump if right is false"
-        ));
-
-        // both are true, result is 1
-        self.emit("    mov $1, %rax       # Both operands true");
-        self.emit(&format!("    jmp {end_label}         # Jump to end"));
-
-        // false case-> result is 0
-        self.emit(&format!("{false_label}:"));
-        self.emit("    mov $0, %rax       # Result is false");
-
-        self.emit(&format!("{end_label}:"));
-    }
-
-    fn emit_comparison(&mut self, jump_instr: &str, op: &str) {
-        self.emit("    cmp %rax, %rcx     # Compare left and right");
-
-        let true_label = format!("{}_true_{}", op, self.generate_label());
-        let end_label = format!("{}_end_{}", op, self.generate_label());
-
-        self.emit(&format!(
-            "    {jump_instr} {true_label}        # Jump if true"
-        ));
-
-        // if left is not less than right, result is 0
-        self.emit("    mov $0, %rax       # Result is false");
-        self.emit(&format!("    jmp {end_label}        # Jump to end"));
-
-        // less equal case -> result is 1
-        self.emit(&format!("{true_label}:"));
-        self.emit("    mov $1, %rax       # Result is true");
-
-        self.emit(&format!("{end_label}:"));
-    }
-
-    /// saves the generated instruction into output vec
-    fn emit(&mut self, instruction: &str) {
-        self.output.push(instruction.to_string());
-    }
-
-    fn emit_function_epilogue(&mut self) {
-        self.emit("    mov %rbp, %rsp   #restore stack pointer to base ptr");
-        self.emit("    pop %rbp     # restore caller's base pointer");
-        self.emit("    ret          #return to caller");
-    }
-
-    fn generate_label(&mut self) -> u32 {
-        self.label_counter += 1;
-        self.label_counter
-    }
-
-    fn get_mov_instr(&self, var_type: &Types) -> &'static str {
-        match var_type {
-            Types::Int => "movl",
-            Types::Void => "movq",
-            Types::Long => "movq",
-            Types::Char => "movb",
-            Types::Float => "movss",
-            Types::Double => "movsd",
-            Types::Pointer(_) => todo!("how do i handle pointers?"),
+            let loaded = self
+                .builder
+                .build_load(llvm_type, ptr_value, &ident)
+                .map_err(|e| format!("failed to load variable: {e}"))?;
+            Ok(loaded)
+        } else {
+            Err(format!(" undefined variable: {ident}"))
         }
     }
-    fn get_type_size(&self, var_type: &Types) -> usize {
-        match var_type {
-            Types::Int => 4,
-            Types::Void => 0,
-            Types::Long => 8,
-            Types::Char => 1,
-            Types::Float => 4,
-            Types::Double => 8,
-            Types::Pointer(_) => 8, // u64 on x86-64
+
+    fn generate_ternary_op(
+        &mut self,
+        condition: &Box<Expression>,
+        true_expr: &Box<Expression>,
+        false_expr: &Box<Expression>,
+    ) -> Result<BasicValueEnum<'ctx>, String> {
+        let cond_val = self.generate_expressions(condition)?;
+        let cond_bool = self.build_not_zero(cond_val)?;
+
+        let then_block = self
+            .context
+            .append_basic_block(self.current_function.unwrap(), "ternary_then");
+        let else_block = self
+            .context
+            .append_basic_block(self.current_function.unwrap(), "ternary_else");
+        let merge_block = self
+            .context
+            .append_basic_block(self.current_function.unwrap(), "ternary_merge");
+
+        self.builder
+            .build_conditional_branch(cond_bool, then_block, else_block)
+            .map_err(|e| format!("failed to build conditional branch: {e}"))?;
+
+        self.builder.position_at_end(then_block);
+        let then_val = self.generate_expressions(true_expr)?;
+        self.builder
+            .build_unconditional_branch(merge_block)
+            .map_err(|e| format!("failed to build branch: {e}"))?;
+        let then_end_blk = self.builder.get_insert_block().unwrap();
+
+        self.builder.position_at_end(else_block);
+        let else_val = self.generate_expressions(false_expr)?;
+        self.builder
+            .build_unconditional_branch(merge_block)
+            .map_err(|e| format!("failed to build branch: {e}"))?;
+        let else_end_blk = self.builder.get_insert_block().unwrap();
+
+        self.builder.position_at_end(merge_block);
+        let phi = self
+            .builder
+            .build_phi(then_val.get_type(), "ternary_result")
+            .map_err(|e| format!("failed to build phi: {e}"))?;
+
+        phi.add_incoming(&[(&then_val, then_end_blk), (&else_val, else_end_blk)]);
+
+        Ok(phi.as_basic_value())
+    }
+
+    fn generate_function_call(
+        &mut self,
+        name: &str,
+        arguments: &[Expression],
+    ) -> Result<BasicValueEnum<'ctx>, String> {
+        if let Some(&function) = self.function_table.get(name) {
+            let mut args: Vec<BasicValueEnum> = Vec::new();
+            for arg in arguments {
+                args.push(self.generate_expressions(arg)?);
+            }
+
+            let args_refs = args.iter().map(|v| (*v).into()).collect::<Vec<_>>();
+            let call_site = self
+                .builder
+                .build_call(function, &args_refs, "call")
+                .map_err(|e| format!("failed to build call: {e}"))?;
+
+            if let Some(return_val) = call_site.try_as_basic_value().left() {
+                Ok(return_val)
+            } else {
+                Ok(self.context.i32_type().const_int(0, false).into())
+            }
+        } else {
+            Err(format!("unknown function: {name}"))
         }
     }
-    fn get_register_name(&self, var_type: &Types) -> &'static str {
-        match var_type {
-            // a 32 bit register
-            Types::Int => "%eax",
-            // two below are 64 bits
-            Types::Void => "%rax",
-            Types::Long => "%rax",
-            // 8 bit register
-            Types::Char => "%al",
-            // SSE reg for floats
-            Types::Float => "%xmm0",
-            // SSE reg for doubles
-            Types::Double => "%xmm0",
-            // a 64 bit register used for pointers
-            Types::Pointer(_) => "%rax",
+
+    fn generate_assignment(
+        &mut self,
+        target: &str,
+        value: &Box<Expression>,
+    ) -> Result<BasicValueEnum<'ctx>, String> {
+        let val = self.generate_expressions(value)?;
+
+        let var_info = if let Some(info) = self.lookup_variable(&target) {
+            info.value.into_pointer_value()
+        } else {
+            return Err(format!("Undefined variable in assignment: {}", target));
+        };
+
+        self.builder
+            .build_store(var_info, val)
+            .map_err(|e| format!("Failed to store: {:?}", e))?;
+        Ok(val)
+    }
+
+    fn generate_bitwise_not(
+        &mut self,
+        expr: &Box<Expression>,
+    ) -> Result<BasicValueEnum<'ctx>, String> {
+        let val = self.generate_expressions(expr)?;
+        Ok(self
+            .builder
+            .build_not(val.into_int_value(), "not")
+            .map_err(|e| format!("failed to build not: {e}"))?
+            .into())
+    }
+
+    fn generate_logical_not(
+        &mut self,
+        expr: &Box<Expression>,
+    ) -> Result<BasicValueEnum<'ctx>, String> {
+        let val = self.generate_expressions(expr)?;
+        let is_zero = self
+            .builder
+            .build_int_compare(
+                IntPredicate::EQ,
+                val.into_int_value(),
+                self.context.i32_type().const_int(0, false),
+                "is_zero",
+            )
+            .map_err(|e| format!("failed to build compare: {e}"))?;
+        Ok(is_zero.into())
+    }
+
+    fn generate_unary_minus(
+        &mut self,
+        expr: &Box<Expression>,
+    ) -> Result<BasicValueEnum<'ctx>, String> {
+        let val = self.generate_expressions(expr)?;
+        Ok(self
+            .builder
+            .build_int_neg(val.into_int_value(), "neg")
+            .map_err(|e| format!("failed to build neg: {e}"))?
+            .into())
+    }
+
+    fn llvm_type_from_ast(&self, ast_type: &Types) -> Result<BasicTypeEnum<'ctx>, String> {
+        match ast_type {
+            Types::Int => Ok(self.context.i32_type().into()),
+            Types::Char => Ok(self.context.i8_type().into()),
+            Types::Long => Ok(self.context.i64_type().into()),
+            Types::Float => Ok(self.context.f32_type().into()),
+            Types::Double => Ok(self.context.f64_type().into()),
+            Types::Pointer(_inner) => Ok(self.context.ptr_type(AddressSpace::default()).into()),
+            Types::Void => Err("cannot create basic type for void".to_string()),
         }
     }
+
+    /// used to map Types to llvm types. it will create zero values for each one of my types
+    fn get_zero_value(&self, ast_type: &Types) -> Result<BasicValueEnum<'ctx>, String> {
+        match ast_type {
+            Types::Int => Ok(self.context.i32_type().const_int(0, false).into()),
+            Types::Char => Ok(self.context.i8_type().const_int(0, false).into()),
+            Types::Long => Ok(self.context.i64_type().const_int(0, false).into()),
+            Types::Float => Ok(self.context.f32_type().const_float(0.0).into()),
+            Types::Double => Ok(self.context.f64_type().const_float(0.0).into()),
+            Types::Pointer(_) => {
+                let ptr_t = self.context.ptr_type(AddressSpace::default());
+                Ok(ptr_t.const_null().into())
+            }
+            Types::Void => Err("Cant create zero value for void".to_string()),
+        }
+    }
+
+    /// used for boolean comparison. we need to map 1,0 to true and false for the llvm
+    /// to understand the equation
+    fn build_not_zero(&mut self, value: BasicValueEnum<'ctx>) -> Result<IntValue<'ctx>, String> {
+        let zero = match value.get_type() {
+            BasicTypeEnum::IntType(int_type) => int_type.const_zero(),
+            BasicTypeEnum::FloatType(_float) => {
+                return Err("float comparison not implemented".to_string());
+            }
+            _ => return Err("unsupported type for boolean conversion".to_string()),
+        };
+        self.builder
+            .build_int_compare(
+                IntPredicate::NE,
+                value.into_int_value(),
+                zero,
+                "is_not_zero",
+            )
+            .map_err(|e| format!("failed to build compare: {e}"))
+    }
+
+    /// each block has to have a terminator otherwise we could add an instruction after
+    /// the block has been terminated. this method is used as a check for that
+    fn current_block_terminator(&self) -> bool {
+        if let Some(block) = self.builder.get_insert_block() {
+            block.get_terminator().is_some()
+        } else {
+            false
+        }
+    }
+
     fn push_scope(&mut self) {
         self.scope_stack.push(HashMap::new());
     }
-    fn pop_scop(&mut self) {
+
+    fn pop_scope(&mut self) {
         if self.scope_stack.len() > 1 {
             self.scope_stack.pop();
         }
     }
-    fn lookup_var(&self, name: &str) -> Option<&VariableInfo> {
-        // using .rev to look from inner most scope to outter most one
+
+    fn lookup_variable(&mut self, name: &str) -> Option<&VariableInfo<'ctx>> {
         for scope in self.scope_stack.iter().rev() {
             if let Some(var) = scope.get(name) {
                 return Some(var);
@@ -634,20 +840,35 @@ impl AssemblyGenerator {
         None
     }
 
-    fn declare_var(&mut self, name: &str, var: &VariableInfo) {
+    fn declare_variable(&mut self, name: &str, var_info: VariableInfo<'ctx>) {
         if let Some(scope) = self.scope_stack.last_mut() {
-            scope.insert(name.to_string(), var.clone());
+            scope.insert(name.to_string(), var_info);
         }
     }
-}
 
-fn last_statement_is_return(statement: &Statement) -> bool {
-    match statement {
-        Statement::Block(statements) => statements
-            .last()
-            .map(last_statement_is_return)
-            .unwrap_or(false),
-        Statement::Return(_) => true,
-        _ => false,
+    pub fn compile_to_obj(&self, output_path: &Path) -> Result<(), String> {
+        Target::initialize_all(&inkwell::targets::InitializationConfig::default());
+
+        let target_triple = TargetMachine::get_default_triple();
+        let target = Target::from_triple(&target_triple)
+            .map_err(|e| format!("Failed to create target: {e}"))?;
+
+        let target_machine = target
+            .create_target_machine(
+                &target_triple,
+                "generic",
+                "",
+                OptimizationLevel::Default,
+                RelocMode::Default,
+                CodeModel::Default,
+            )
+            .ok_or("Failed to create the target machine")?;
+        target_machine
+            .write_to_file(&self.module, FileType::Object, output_path)
+            .map_err(|e| format!("failed to create object file: {e}"))?;
+        Ok(())
+    }
+    pub fn print_ir(&self) {
+        self.module.print_to_stderr();
     }
 }

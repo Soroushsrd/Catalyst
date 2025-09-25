@@ -1,6 +1,5 @@
-use std::fmt::Display;
-
 use crate::errors::{CompilerError, ErrorType};
+use std::fmt::Display;
 
 // maximal munch: When two
 // lexical grammar rules can both match a chunk of code that the scanner is

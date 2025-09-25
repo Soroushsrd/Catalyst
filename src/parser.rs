@@ -57,7 +57,7 @@ pub struct Identifier {
 #[derive(Debug, Clone)]
 pub struct Parameter {
     #[allow(dead_code)]
-    parameter_type: Types,
+    pub parameter_type: Types,
     pub name: Option<Identifier>,
 }
 
