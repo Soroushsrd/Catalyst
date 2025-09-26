@@ -433,10 +433,26 @@ impl Parser {
 
             let then_branch = self.parse_statement()?;
 
+            if matches!(then_branch, Statement::VarDeclaration { .. }) {
+                return Err(self.error(
+                    ErrorType::SyntaxError,
+                    "Variable declaration not allowed here (use braces to create a block)",
+                ));
+            }
+
             let else_branch = if self.check_token_type(&TokenType::Else) {
                 //for else
                 self.advance();
-                Some(Box::new(self.parse_statement()?))
+                let stmt = self.parse_statement()?;
+
+                if matches!(then_branch, Statement::VarDeclaration { .. }) {
+                    return Err(self.error(
+                        ErrorType::SyntaxError,
+                        "Variable declaration not allowed here (use braces to create a block)",
+                    ));
+                }
+
+                Some(Box::new(stmt))
             } else {
                 None
             };
@@ -509,12 +525,20 @@ impl Parser {
     /// for now just calls parse assignment
     /// the differentiation between parse_assignment and parse_expression
     /// is done to allow parse_assignment to be recursively called
+    ///bin/ parse_expression()
+    /// └── parse_assignment()          (lowest precedence)
+    ///     └── parse_ternary_operation()
+    ///         └── parse_binary_expression(0)
+    ///             └── parse_unary_expression()
+    ///                 └── parse_primary_expression()  (highest precedence)
     fn parse_expression(&self) -> ParseResult<Expression> {
         self.parse_assignment()
+        // self.parse_ternary_operation()
     }
 
     /// handles assignment expressions such as int a = 1;
     fn parse_assignment(&self) -> ParseResult<Expression> {
+        // let expr = self.parse_binary_expression(0)?;
         let expr = self.parse_ternary_operation()?;
 
         if self.check_token_type(&TokenType::Equal) {
@@ -689,16 +713,14 @@ impl Parser {
     /// "*" and "/" have the same and highest precendence
     fn get_precendece(&self, operator: &BinaryOperator) -> u8 {
         match operator {
-            BinaryOperator::Or => 1,
-            BinaryOperator::And => 2,
-            BinaryOperator::Equals => 3,
-            BinaryOperator::NotEquals => 3,
-            BinaryOperator::Greater => 4,
-            BinaryOperator::GreaterEqual => 4,
-            BinaryOperator::Less => 4,
-            BinaryOperator::LessEqual => 4,
-            BinaryOperator::Add | BinaryOperator::Subtract => 5,
-            BinaryOperator::Multiply | BinaryOperator::Divide => 6,
+            BinaryOperator::Or | BinaryOperator::And => 1,
+            BinaryOperator::Equals | BinaryOperator::NotEquals => 2,
+            BinaryOperator::Greater
+            | BinaryOperator::GreaterEqual
+            | BinaryOperator::Less
+            | BinaryOperator::LessEqual => 3,
+            BinaryOperator::Add | BinaryOperator::Subtract => 4,
+            BinaryOperator::Multiply | BinaryOperator::Divide => 5,
             //TODO: %
         }
     }

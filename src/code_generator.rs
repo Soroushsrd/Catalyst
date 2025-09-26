@@ -227,6 +227,9 @@ impl<'ctx> LLVMCodeGenerator<'ctx> {
                 self.push_scope();
                 for stmt in statements {
                     self.generate_statement(stmt)?;
+                    if self.current_block_terminator() {
+                        break;
+                    }
                 }
                 self.pop_scope();
             }
