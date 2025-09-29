@@ -1,7 +1,7 @@
 
 # C Language Compiler
 
-A simple compiler written in Rust that translates C language into x86-64 assembly code. This project demonstrates the fundamental phases of compilation: lexical analysis, parsing, and code generation.
+A simple compiler written in Rust that uses LLVM to compile C code.
 
 ## Features
 
@@ -52,7 +52,7 @@ A simple compiler written in Rust that translates C language into x86-64 assembl
 #### Control Flow
 
 - [x] **Conditional statements** (`if`/`else`)
-- [ ] **Loops** (`while`, `for`)
+- [x] **Loops** (`while`, `for`,`continue`,`break`)
 - [x] **Comparison operators** (`==`, `!=`, `<`, `>`, `<=`, `>=`)
 - [x] **Logical operators** (`&&`, `||`)
 
@@ -69,7 +69,7 @@ A simple compiler written in Rust that translates C language into x86-64 assembl
 
 - [ ] **Basic optimizations** (constant folding, dead code elimination)
 - [x] **Better error messages** with line numbers and suggestions
-- [ ] **Debugging information generation**
+- [x] **Debugging information generation**
 - [ ] **Standard library functions** (`printf`, etc.)
 
 ### Language Extensions
@@ -99,7 +99,7 @@ The compiler follows a traditional three-phase design:
 
 ### 3. Code Generation (`code_generator.rs`)
 
-- **LLVMCodeGenerator** translates AST to llvm generated assembly 
+- **LLVMCodeGenerator** translates AST to llvm generated assembly
 - Follows System V ABI calling conventions
 - Manages stack frame allocation and variable storage
 - Generates complete executable assembly with proper prologue/epilogue
@@ -111,7 +111,7 @@ The compiler follows a traditional three-phase design:
 - Rust compiler
 - GNU Assembler (`as`)
 - GNU Linker (`ld`)
-- LLVM 18.1
+- LLVM 18.1 (Just to compile Catalyst)
 
 ### Building and Running
 
