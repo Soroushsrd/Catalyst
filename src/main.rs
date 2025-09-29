@@ -86,29 +86,8 @@ fn link_exe(object_file: &str, output_name: &str) -> Result<()> {
 
     println!("Compilation successful. Output: {}", output_name);
     Ok(())
-    // let assemble = std::process::Command::new("as")
-    //     .args(["-64", object_file, "-o", "temp.o"])
-    //     .status()?;
-
-    // if !assemble.success() {
-    //     println!("failed to assemble");
-    //     //TODO: use custom error handling
-    //     return Err(ErrorKind::Other.into());
-    // }
-
-    // let link = std::process::Command::new("ld")
-    //     .args(["temp.o", "-o", output_name])
-    //     .status()?;
-
-    // if !link.success() {
-    //     println!("failed to link");
-    //     return Err(ErrorKind::Other.into());
-    // }
-
-    // fs::remove_file("temp.o")?;
-    // println!("Compilation successful. output file {output_name}");
-    // Ok(())
 }
+
 /// takes in a file name and source code str
 /// first parses the source code into its tokens and using the parser module
 /// creates an abstract syntax tree. Then, the code generator will generate
@@ -123,10 +102,10 @@ fn run(source_code: &str, file_name: &str) -> Result<()> {
         }
     }
 
-    println!("***TOKENS***");
-    for token in tokens.iter() {
-        println!("Token: {token:?}");
-    }
+    // println!("***TOKENS***");
+    // for token in tokens.iter() {
+    //     println!("Token: {token:?}");
+    // }
 
     let mut parser = Parser::new(tokens, source_code);
     match parser.parse() {
@@ -138,8 +117,8 @@ fn run(source_code: &str, file_name: &str) -> Result<()> {
                 return Err(ErrorKind::InvalidInput.into());
             }
 
-            println!("\n***AST***");
-            println!("{ast:#?}");
+            // println!("\n***AST***");
+            // println!("{ast:#?}");
             let context = Context::create();
             let mut codegen = LLVMCodeGenerator::new(&context, file_name);
 
@@ -148,8 +127,8 @@ fn run(source_code: &str, file_name: &str) -> Result<()> {
                 return Err(ErrorKind::Other.into());
             }
 
-            println!("\n***LLVM IR***");
-            codegen.print_ir();
+            // println!("\n***LLVM IR***");
+            // codegen.print_ir();
 
             let object_file_name = format!("{file_name}.o");
             let obj_path = Path::new(&object_file_name);

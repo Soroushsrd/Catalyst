@@ -1,3 +1,4 @@
+use inkwell::basic_block::BasicBlock;
 use inkwell::builder::Builder;
 use inkwell::context::Context;
 use inkwell::module::Module;
@@ -27,15 +28,17 @@ pub struct LLVMCodeGenerator<'ctx> {
     pub context: &'ctx Context,
     pub module: Module<'ctx>,
     pub builder: Builder<'ctx>,
-    ///a vec of symbol -> stack offset
-    ///used to keep track of symbol scopes
+    // a vec of symbol -> stack offset
+    // used to keep track of symbol scopes
     scope_stack: Vec<HashMap<String, VariableInfo<'ctx>>>,
+    // to be used when we want to break out of a loop
+    loop_exit_stack: Vec<BasicBlock<'ctx>>,
+    // to be used when a continue keyword is used!
+    loop_cont_stack: Vec<BasicBlock<'ctx>>,
     // current function being compiled
     current_function: Option<FunctionValue<'ctx>>,
     // TODO: forward declaration table
     function_table: HashMap<String, FunctionValue<'ctx>>,
-    // label caounter for unique labels
-    label_counter: u32,
 }
 
 impl<'ctx> LLVMCodeGenerator<'ctx> {
@@ -47,9 +50,10 @@ impl<'ctx> LLVMCodeGenerator<'ctx> {
             module,
             builder,
             scope_stack: vec![HashMap::new()],
+            loop_exit_stack: vec![],
+            loop_cont_stack: vec![],
             current_function: None,
             function_table: HashMap::new(),
-            label_counter: 0u32,
         }
     }
 
@@ -245,6 +249,15 @@ impl<'ctx> LLVMCodeGenerator<'ctx> {
                         .map_err(|e| format!("failed to build return: {e}"))?;
                 }
             }
+            Statement::Break => {
+                if let Some(exit_block) = self.loop_exit_stack.last() {
+                    self.builder
+                        .build_unconditional_branch(*exit_block)
+                        .map_err(|e| format!("failed to build break branch: {e}"))?;
+                } else {
+                    return Err("break statement used outside a loop".to_string());
+                }
+            }
             Statement::Expression(expr) => {
                 self.generate_expressions(expr)?;
             }
@@ -344,6 +357,8 @@ impl<'ctx> LLVMCodeGenerator<'ctx> {
                     .context
                     .append_basic_block(self.current_function.unwrap(), "loop_end");
 
+                self.push_loop_context(loop_end, loop_body);
+
                 self.builder
                     .build_unconditional_branch(loop_cond)
                     .map_err(|e| format!("Failed to build branch: {:?}", e))?;
@@ -363,6 +378,7 @@ impl<'ctx> LLVMCodeGenerator<'ctx> {
                         .map_err(|e| format!("Failed to build branch: {:?}", e))?;
                 }
 
+                self.pop_loop_context();
                 self.builder.position_at_end(loop_end);
             }
 
@@ -376,6 +392,8 @@ impl<'ctx> LLVMCodeGenerator<'ctx> {
                 let loop_end = self
                     .context
                     .append_basic_block(self.current_function.unwrap(), "do_end");
+
+                self.push_loop_context(loop_end, loop_body);
 
                 self.builder
                     .build_unconditional_branch(loop_body)
@@ -396,6 +414,7 @@ impl<'ctx> LLVMCodeGenerator<'ctx> {
                     .build_conditional_branch(condition_bool, loop_body, loop_end)
                     .map_err(|e| format!("Failed to build conditional branch: {:?}", e))?;
 
+                self.pop_loop_context();
                 self.builder.position_at_end(loop_end);
             }
         }
@@ -891,6 +910,16 @@ impl<'ctx> LLVMCodeGenerator<'ctx> {
         } else {
             false
         }
+    }
+
+    fn push_loop_context(&mut self, exit_block: BasicBlock<'ctx>, cont_block: BasicBlock<'ctx>) {
+        self.loop_cont_stack.push(cont_block);
+        self.loop_exit_stack.push(exit_block);
+    }
+
+    fn pop_loop_context(&mut self) {
+        self.loop_cont_stack.pop();
+        self.loop_cont_stack.pop();
     }
 
     fn push_scope(&mut self) {

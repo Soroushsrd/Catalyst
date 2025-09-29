@@ -102,7 +102,9 @@ pub enum Statement {
     DoWhile {
         body: Box<Statement>,
         condition: Expression,
-    }, //TODO:
+    },
+    Break,
+    //TODO:
 }
 
 /// evaluates to a value and can be used as part of other expressions
@@ -164,6 +166,7 @@ pub enum BinaryOperator {
 pub struct Parser {
     tokens: Vec<Token>,
     current: RefCell<usize>,
+    loop_depth: RefCell<usize>,
     errors: RefCell<Vec<CompilerError>>,
     source: String,
 }
@@ -173,6 +176,7 @@ impl Parser {
         Self {
             tokens,
             current: RefCell::new(0),
+            loop_depth: RefCell::new(0),
             errors: RefCell::new(Vec::with_capacity(10)),
             source: source.to_string(),
         }
@@ -186,7 +190,10 @@ impl Parser {
         while !self.is_at_end() {
             match self.parse_function() {
                 Ok(function) => functions.push(function),
-                Err(e) => self.errors.borrow_mut().push(e),
+                Err(e) => {
+                    self.errors.borrow_mut().push(e);
+                    self.synchronize();
+                }
             }
         }
 
@@ -350,10 +357,20 @@ impl Parser {
         Ok(Statement::Block(statements))
     }
 
-    /// parses different statements
     fn parse_statement(&mut self) -> ParseResult<Statement> {
+        let result = self.parse_statement_inner();
+        if result.is_err() {
+            self.synchronize();
+        }
+        result
+    }
+
+    /// parses different statements
+    fn parse_statement_inner(&mut self) -> ParseResult<Statement> {
         if self.check_token_type(&TokenType::Return) {
             self.parse_return_statement()
+        } else if self.check_token_type(&TokenType::Break) {
+            self.parse_break_statement()
         } else if self
             .peek()
             .is_some_and(|t| self.is_parameter_type(t.token_type()))
@@ -374,7 +391,12 @@ impl Parser {
         }
     }
     fn parse_do_while_flow(&mut self) -> ParseResult<Statement> {
+        self.consume_type(&TokenType::Do, "Expected a do keyword")?;
+
+        *self.loop_depth.borrow_mut() += 1;
         let body = self.parse_block_statement()?;
+        *self.loop_depth.borrow_mut() -= 1;
+
         self.consume_type(&TokenType::While, "Expected a while keyword")?;
 
         self.consume_type(
@@ -386,6 +408,8 @@ impl Parser {
             &TokenType::RightParen,
             "Expected the while statement to end with a parenthesis",
         )?;
+
+        self.consume_type(&TokenType::Semicolon, "Expected ';' after do-while")?;
 
         Ok(Statement::DoWhile {
             body: Box::new(body),
@@ -406,7 +430,10 @@ impl Parser {
                 &TokenType::RightParen,
                 "Expected the while statement to end with a parenthesis",
             )?;
+
+            *self.loop_depth.borrow_mut() += 1;
             let then_branch = self.parse_statement()?;
+            *self.loop_depth.borrow_mut() -= 1;
 
             Ok(Statement::While {
                 condition,
@@ -502,6 +529,18 @@ impl Parser {
         })
     }
 
+    fn parse_break_statement(&mut self) -> ParseResult<Statement> {
+        if *self.loop_depth.borrow() == 0 {
+            return Err(self.error(
+                ErrorType::SemanticError,
+                "break statement not within a loop",
+            ));
+        }
+
+        self.consume_type(&TokenType::Break, "Expected Break")?;
+        self.consume_type(&TokenType::Semicolon, "Expected a semicolon")?;
+        Ok(Statement::Break)
+    }
     /// parses the return statements such as
     /// return b;
     /// or
@@ -809,6 +848,37 @@ impl Parser {
             matches!(ident.token_type(), TokenType::Identifier(_))
         } else {
             false
+        }
+    }
+
+    fn synchronize(&self) {
+        self.advance();
+        while !self.is_at_end() {
+            //either stop at semicolon or at keywords. thus skipping the problematic area that caused
+            // the error to pop up
+            if let Some(prev) = self.previous() {
+                if matches!(prev.token_type(), TokenType::Semicolon) {
+                    return;
+                }
+            }
+            if let Some(token) = self.peek() {
+                match token.token_type() {
+                    TokenType::Class
+                    | TokenType::If
+                    | TokenType::While
+                    | TokenType::Do
+                    | TokenType::For
+                    | TokenType::Return
+                    | TokenType::Int
+                    | TokenType::Void
+                    | TokenType::Char
+                    | TokenType::Long
+                    | TokenType::Float
+                    | TokenType::Double => return,
+                    _ => {}
+                }
+            }
+            self.advance();
         }
     }
 }

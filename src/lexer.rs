@@ -207,6 +207,7 @@ impl Scanner {
             "float" => TokenType::Float,
             //TODO: Add pointer here
             // "&" => TokenType::And,
+            "break" => TokenType::Break,
             "class" => TokenType::Class,
             "else" => TokenType::Else,
             "false" => TokenType::False,
@@ -219,6 +220,7 @@ impl Scanner {
             "this" => TokenType::This,
             "true" => TokenType::True,
             "while" => TokenType::While,
+            "do" => TokenType::Do,
             _ => TokenType::Identifier(text.to_string()),
         }
     }
@@ -434,6 +436,7 @@ pub enum TokenType {
     Float,
     Char,
     And,
+    Break,
     Class,
     Else,
     False,
@@ -488,6 +491,7 @@ impl Display for TokenType {
             Self::Double => write!(f, "double"),
             Self::Float => write!(f, "float"),
             Self::And => write!(f, "&"),
+            Self::Break => write!(f, "break"),
             Self::Class => write!(f, "class"),
             Self::Else => write!(f, "else"),
             Self::False => write!(f, "false"),
