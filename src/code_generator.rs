@@ -227,6 +227,9 @@ impl<'ctx> LLVMCodeGenerator<'ctx> {
 
     fn generate_statement(&mut self, statement: &Statement) -> Result<(), String> {
         match statement {
+            Statement::Empty => {
+                println!("came accross an empty block");
+            }
             Statement::Block(statements) => {
                 self.push_scope();
                 for stmt in statements {
@@ -256,6 +259,15 @@ impl<'ctx> LLVMCodeGenerator<'ctx> {
                         .map_err(|e| format!("failed to build break branch: {e}"))?;
                 } else {
                     return Err("break statement used outside a loop".to_string());
+                }
+            }
+            Statement::Continue => {
+                if let Some(cont_block) = self.loop_cont_stack.last() {
+                    self.builder
+                        .build_unconditional_branch(*cont_block)
+                        .map_err(|e| format!("failed to build branch: {e}"))?;
+                } else {
+                    return Err("Continue statement used outside a loop".to_string());
                 }
             }
             Statement::Expression(expr) => {
@@ -328,6 +340,17 @@ impl<'ctx> LLVMCodeGenerator<'ctx> {
             .map_err(|e| format!("failed to build init branch: {e}"))?;
 
         self.builder.position_at_end(loop_init);
+
+        let has_declaration = if let Some(init) = counter_declaration {
+            matches!(**init, Statement::VarDeclaration { .. })
+        } else {
+            false
+        };
+
+        if has_declaration {
+            self.push_scope();
+        }
+
         if let Some(init_stmnt) = counter_declaration {
             self.generate_statement(&init_stmnt)?;
         }
@@ -365,6 +388,9 @@ impl<'ctx> LLVMCodeGenerator<'ctx> {
             .build_unconditional_branch(loop_cond)
             .map_err(|e| format!("failed to build branch: {e}"))?;
 
+        if has_declaration {
+            self.pop_scope();
+        }
         self.pop_loop_context();
         self.builder.position_at_end(loop_end);
 
@@ -386,11 +412,33 @@ impl<'ctx> LLVMCodeGenerator<'ctx> {
             }
         }
         let llvm_type = self.llvm_type_from_ast(var_type)?;
-        let alloca = self
-            .builder
-            .build_alloca(llvm_type, &name.name)
-            .map_err(|e| format!("failed to build alloca: {e}"))?;
+        // let alloca = self
+        //     .builder
+        //     .build_alloca(llvm_type, &name.name)
+        //     .map_err(|e| format!("failed to build alloca: {e}"))?;
+        let alloca = if let Some(func) = self.current_function {
+            let entry_block = func.get_first_basic_block().unwrap();
+            let current_block = self.builder.get_insert_block().unwrap();
 
+            // Temporarily position at the start of entry block
+            if let Some(first_instr) = entry_block.get_first_instruction() {
+                self.builder.position_before(&first_instr);
+            } else {
+                self.builder.position_at_end(entry_block);
+            }
+
+            let alloca = self
+                .builder
+                .build_alloca(llvm_type, &name.name)
+                .map_err(|e| format!("failed to build alloca: {e}"))?;
+
+            // Restore position
+            self.builder.position_at_end(current_block);
+
+            alloca
+        } else {
+            return Err("No current function".to_string());
+        };
         if let Some(init_expr) = initializer {
             let init_value = self.generate_expressions(init_expr)?;
             self.builder
@@ -712,6 +760,15 @@ impl<'ctx> LLVMCodeGenerator<'ctx> {
                             "divide",
                         )
                         .map_err(|e| format!("failed to build division: {e}"))?
+                        .into()),
+                    BinaryOperator::Mod => Ok(self
+                        .builder
+                        .build_int_signed_rem(
+                            left_val.into_int_value(),
+                            right_val.into_int_value(),
+                            "remainder",
+                        )
+                        .map_err(|e| format!("failed to build remainder: {e}"))?
                         .into()),
                     BinaryOperator::Equals => {
                         let ret = self
@@ -1037,7 +1094,7 @@ impl<'ctx> LLVMCodeGenerator<'ctx> {
 
     fn pop_loop_context(&mut self) {
         self.loop_cont_stack.pop();
-        self.loop_cont_stack.pop();
+        self.loop_exit_stack.pop();
     }
 
     fn push_scope(&mut self) {

@@ -67,7 +67,6 @@ pub enum Types {
     Void,
     #[allow(dead_code)]
     Int,
-    //WARNING: not implemented yet
     Long,
     Char,
     Float,
@@ -78,6 +77,7 @@ pub enum Types {
 /// performs an action but doesnt return a value
 #[derive(Debug, Clone)]
 pub enum Statement {
+    Empty,
     Block(Vec<Statement>),
     Return(Option<Expression>),
     VarDeclaration {
@@ -110,6 +110,7 @@ pub enum Statement {
         body: Box<Statement>,
     },
     Break,
+    Continue,
     //TODO:
 }
 
@@ -156,6 +157,7 @@ pub enum BinaryOperator {
     Subtract,
     Multiply,
     Divide,
+    Mod,
     Equals,
     NotEquals,
     Greater,
@@ -377,6 +379,11 @@ impl Parser {
             self.parse_return_statement()
         } else if self.check_token_type(&TokenType::Break) {
             self.parse_break_statement()
+        } else if self.check_token_type(&TokenType::Continue) {
+            self.parse_continue_statement()
+        } else if self.check_token_type(&TokenType::Semicolon) {
+            self.advance();
+            Ok(Statement::Empty)
         } else if self
             .peek()
             .is_some_and(|t| self.is_parameter_type(t.token_type()))
@@ -429,7 +436,6 @@ impl Parser {
         };
 
         let increment = if self.check_token_type(&TokenType::RightParen) {
-            self.consume_type(&TokenType::Semicolon, "expected )")?;
             None
         } else {
             Some(self.parse_expression()?)
@@ -587,6 +593,20 @@ impl Parser {
         })
     }
 
+    fn parse_continue_statement(&mut self) -> ParseResult<Statement> {
+        if *self.loop_depth.borrow() == 0 {
+            return Err(self.error(
+                ErrorType::SemanticError,
+                "continue statement not withing a loop",
+            ));
+        }
+
+        self.consume_type(&TokenType::Continue, "expected a continue keyword")?;
+        self.consume_type(&TokenType::Semicolon, "expected a semicolon")?;
+
+        Ok(Statement::Continue)
+    }
+
     fn parse_break_statement(&mut self) -> ParseResult<Statement> {
         if *self.loop_depth.borrow() == 0 {
             return Err(self.error(
@@ -630,7 +650,6 @@ impl Parser {
     ///                 └── parse_primary_expression()  (highest precedence)
     fn parse_expression(&self) -> ParseResult<Expression> {
         self.parse_assignment()
-        // self.parse_ternary_operation()
     }
 
     /// handles assignment expressions such as int a = 1;
@@ -668,6 +687,7 @@ impl Parser {
                 TokenType::Minus => BinaryOperator::Subtract,
                 TokenType::Star => BinaryOperator::Multiply,
                 TokenType::Slash => BinaryOperator::Divide,
+                TokenType::Mod => BinaryOperator::Mod,
                 TokenType::And => BinaryOperator::And,
                 TokenType::Or => BinaryOperator::Or,
                 TokenType::BangEqual => BinaryOperator::NotEquals,
@@ -817,7 +837,7 @@ impl Parser {
             | BinaryOperator::Less
             | BinaryOperator::LessEqual => 3,
             BinaryOperator::Add | BinaryOperator::Subtract => 4,
-            BinaryOperator::Multiply | BinaryOperator::Divide => 5,
+            BinaryOperator::Multiply | BinaryOperator::Divide | BinaryOperator::Mod => 5,
             //TODO: %
         }
     }
@@ -921,8 +941,7 @@ impl Parser {
             }
             if let Some(token) = self.peek() {
                 match token.token_type() {
-                    TokenType::Class
-                    | TokenType::If
+                    TokenType::If
                     | TokenType::While
                     | TokenType::Do
                     | TokenType::For
