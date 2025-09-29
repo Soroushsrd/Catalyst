@@ -266,158 +266,278 @@ impl<'ctx> LLVMCodeGenerator<'ctx> {
                 name,
                 initializer,
             } => {
-                if let Some(current_scope) = self.scope_stack.last() {
-                    if current_scope.contains_key(&name.name) {
-                        return Err(format!(
-                            "variable {} already declared in this scope",
-                            name.name
-                        ));
-                    }
-                }
-                let llvm_type = self.llvm_type_from_ast(var_type)?;
-                let alloca = self
-                    .builder
-                    .build_alloca(llvm_type, &name.name)
-                    .map_err(|e| format!("failed to build alloca: {e}"))?;
-
-                if let Some(init_expr) = initializer {
-                    let init_value = self.generate_expressions(init_expr)?;
-                    self.builder
-                        .build_store(alloca, init_value)
-                        .map_err(|e| format!("failed to store initial value: {e}"))?;
-                } else {
-                    let zero = self.get_zero_value(var_type)?;
-                    self.builder
-                        .build_store(alloca, zero)
-                        .map_err(|e| format!("failed to store zero value: {e}"))?;
-                }
-
-                self.declare_variable(
-                    &name.name,
-                    VariableInfo {
-                        value: alloca.into(),
-                        var_type: var_type.clone(),
-                    },
-                );
+                self.generate_var_declaration(var_type, name, initializer)?;
             }
             Statement::If {
                 condition,
                 then_branch,
                 else_branch,
             } => {
-                let condition_value = self.generate_expressions(condition)?;
-                let condition_bool = self.build_not_zero(condition_value)?;
-
-                let then_block = self
-                    .context
-                    .append_basic_block(self.current_function.unwrap(), "then");
-                let else_block = self
-                    .context
-                    .append_basic_block(self.current_function.unwrap(), "else");
-                let merge_block = self
-                    .context
-                    .append_basic_block(self.current_function.unwrap(), "merge");
-
-                self.builder
-                    .build_conditional_branch(condition_bool, then_block, else_block)
-                    .map_err(|e| format!("Failed to build conditional branch: {:?}", e))?;
-
-                self.builder.position_at_end(then_block);
-                self.generate_statement(then_branch)?;
-                if !self.current_block_terminator() {
-                    self.builder
-                        .build_unconditional_branch(merge_block)
-                        .map_err(|e| format!("Failed to build branch: {:?}", e))?;
-                }
-
-                self.builder.position_at_end(else_block);
-                if let Some(else_stmt) = else_branch {
-                    self.generate_statement(else_stmt)?;
-                }
-                if !self.current_block_terminator() {
-                    self.builder
-                        .build_unconditional_branch(merge_block)
-                        .map_err(|e| format!("Failed to build branch: {:?}", e))?;
-                }
-
-                self.builder.position_at_end(merge_block);
+                self.generate_if_statement(condition, then_branch, else_branch)?;
             }
 
             Statement::While {
                 condition,
                 then_branch,
             } => {
-                let loop_cond = self
-                    .context
-                    .append_basic_block(self.current_function.unwrap(), "loop_cond");
-                let loop_body = self
-                    .context
-                    .append_basic_block(self.current_function.unwrap(), "loop_body");
-                let loop_end = self
-                    .context
-                    .append_basic_block(self.current_function.unwrap(), "loop_end");
-
-                self.push_loop_context(loop_end, loop_body);
-
-                self.builder
-                    .build_unconditional_branch(loop_cond)
-                    .map_err(|e| format!("Failed to build branch: {:?}", e))?;
-
-                self.builder.position_at_end(loop_cond);
-                let condition_value = self.generate_expressions(condition)?;
-                let condition_bool = self.build_not_zero(condition_value)?;
-                self.builder
-                    .build_conditional_branch(condition_bool, loop_body, loop_end)
-                    .map_err(|e| format!("Failed to build conditional branch: {:?}", e))?;
-
-                self.builder.position_at_end(loop_body);
-                self.generate_statement(then_branch)?;
-                if !self.current_block_terminator() {
-                    self.builder
-                        .build_unconditional_branch(loop_cond)
-                        .map_err(|e| format!("Failed to build branch: {:?}", e))?;
-                }
-
-                self.pop_loop_context();
-                self.builder.position_at_end(loop_end);
+                self.generate_while_statement(condition, then_branch)?;
             }
 
             Statement::DoWhile { body, condition } => {
-                let loop_body = self
-                    .context
-                    .append_basic_block(self.current_function.unwrap(), "do_body");
-                let loop_cond = self
-                    .context
-                    .append_basic_block(self.current_function.unwrap(), "do_cond");
-                let loop_end = self
-                    .context
-                    .append_basic_block(self.current_function.unwrap(), "do_end");
-
-                self.push_loop_context(loop_end, loop_body);
-
-                self.builder
-                    .build_unconditional_branch(loop_body)
-                    .map_err(|e| format!("Failed to build branch: {:?}", e))?;
-
-                self.builder.position_at_end(loop_body);
-                self.generate_statement(body)?;
-                if !self.current_block_terminator() {
-                    self.builder
-                        .build_unconditional_branch(loop_cond)
-                        .map_err(|e| format!("Failed to build branch: {:?}", e))?;
-                }
-
-                self.builder.position_at_end(loop_cond);
-                let condition_value = self.generate_expressions(condition)?;
-                let condition_bool = self.build_not_zero(condition_value)?;
-                self.builder
-                    .build_conditional_branch(condition_bool, loop_body, loop_end)
-                    .map_err(|e| format!("Failed to build conditional branch: {:?}", e))?;
-
-                self.pop_loop_context();
-                self.builder.position_at_end(loop_end);
+                self.generate_do_while_statement(body, condition)?;
+            }
+            Statement::For {
+                counter_declaration,
+                incrementor,
+                condition,
+                body,
+            } => {
+                self.generate_for_statement(counter_declaration, incrementor, condition, body)?;
             }
         }
+        Ok(())
+    }
+
+    fn generate_for_statement(
+        &mut self,
+        counter_declaration: &Option<Box<Statement>>,
+        incrementor: &Option<Expression>,
+        condition: &Option<Expression>,
+        body: &Box<Statement>,
+    ) -> Result<(), String> {
+        let loop_init = self
+            .context
+            .append_basic_block(self.current_function.unwrap(), "for_init");
+        let loop_cond = self
+            .context
+            .append_basic_block(self.current_function.unwrap(), "for_cond");
+        let loop_body = self
+            .context
+            .append_basic_block(self.current_function.unwrap(), "for_body");
+        let loop_incr = self
+            .context
+            .append_basic_block(self.current_function.unwrap(), "for_incr");
+        let loop_end = self
+            .context
+            .append_basic_block(self.current_function.unwrap(), "for_end");
+
+        self.push_loop_context(loop_end, loop_incr);
+
+        self.builder
+            .build_unconditional_branch(loop_init)
+            .map_err(|e| format!("failed to build init branch: {e}"))?;
+
+        self.builder.position_at_end(loop_init);
+        if let Some(init_stmnt) = counter_declaration {
+            self.generate_statement(&init_stmnt)?;
+        }
+
+        self.builder
+            .build_unconditional_branch(loop_cond)
+            .map_err(|e| format!("failed to build branch: {e}"))?;
+        self.builder.position_at_end(loop_cond);
+
+        if let Some(cond_expr) = condition {
+            let condition_value = self.generate_expressions(cond_expr)?;
+            let condition_bool = self.build_not_zero(condition_value)?;
+            self.builder
+                .build_conditional_branch(condition_bool, loop_body, loop_end)
+                .map_err(|e| format!("failed to build conditional branch: {e}"))?;
+        } else {
+            self.builder
+                .build_unconditional_branch(loop_body)
+                .map_err(|e| format!("failed to build branch: {e}"))?;
+        }
+
+        self.builder.position_at_end(loop_body);
+        self.generate_statement(body)?;
+        if !self.current_block_terminator() {
+            self.builder
+                .build_unconditional_branch(loop_incr)
+                .map_err(|e| format!("failed to build branch: {e}"))?;
+        }
+
+        self.builder.position_at_end(loop_incr);
+        if let Some(incr_expr) = incrementor {
+            self.generate_expressions(incr_expr)?;
+        }
+        self.builder
+            .build_unconditional_branch(loop_cond)
+            .map_err(|e| format!("failed to build branch: {e}"))?;
+
+        self.pop_loop_context();
+        self.builder.position_at_end(loop_end);
+
+        Ok(())
+    }
+
+    fn generate_var_declaration(
+        &mut self,
+        var_type: &Types,
+        name: &Identifier,
+        initializer: &Option<Expression>,
+    ) -> Result<(), String> {
+        if let Some(current_scope) = self.scope_stack.last() {
+            if current_scope.contains_key(&name.name) {
+                return Err(format!(
+                    "variable {} already declared in this scope",
+                    name.name
+                ));
+            }
+        }
+        let llvm_type = self.llvm_type_from_ast(var_type)?;
+        let alloca = self
+            .builder
+            .build_alloca(llvm_type, &name.name)
+            .map_err(|e| format!("failed to build alloca: {e}"))?;
+
+        if let Some(init_expr) = initializer {
+            let init_value = self.generate_expressions(init_expr)?;
+            self.builder
+                .build_store(alloca, init_value)
+                .map_err(|e| format!("failed to store initial value: {e}"))?;
+        } else {
+            let zero = self.get_zero_value(var_type)?;
+            self.builder
+                .build_store(alloca, zero)
+                .map_err(|e| format!("failed to store zero value: {e}"))?;
+        }
+
+        self.declare_variable(
+            &name.name,
+            VariableInfo {
+                value: alloca.into(),
+                var_type: var_type.clone(),
+            },
+        );
+        Ok(())
+    }
+
+    fn generate_if_statement(
+        &mut self,
+        condition: &Expression,
+        then_branch: &Box<Statement>,
+        else_branch: &Option<Box<Statement>>,
+    ) -> Result<(), String> {
+        let condition_value = self.generate_expressions(condition)?;
+        let condition_bool = self.build_not_zero(condition_value)?;
+
+        let then_block = self
+            .context
+            .append_basic_block(self.current_function.unwrap(), "then");
+        let else_block = self
+            .context
+            .append_basic_block(self.current_function.unwrap(), "else");
+        let merge_block = self
+            .context
+            .append_basic_block(self.current_function.unwrap(), "merge");
+
+        self.builder
+            .build_conditional_branch(condition_bool, then_block, else_block)
+            .map_err(|e| format!("Failed to build conditional branch: {:?}", e))?;
+
+        self.builder.position_at_end(then_block);
+        self.generate_statement(then_branch)?;
+        if !self.current_block_terminator() {
+            self.builder
+                .build_unconditional_branch(merge_block)
+                .map_err(|e| format!("Failed to build branch: {:?}", e))?;
+        }
+
+        self.builder.position_at_end(else_block);
+
+        if let Some(else_stmt) = else_branch {
+            self.generate_statement(else_stmt)?;
+        }
+        if !self.current_block_terminator() {
+            self.builder
+                .build_unconditional_branch(merge_block)
+                .map_err(|e| format!("Failed to build branch: {:?}", e))?;
+        }
+
+        self.builder.position_at_end(merge_block);
+        Ok(())
+    }
+
+    fn generate_do_while_statement(
+        &mut self,
+        body: &Box<Statement>,
+        condition: &Expression,
+    ) -> Result<(), String> {
+        let loop_body = self
+            .context
+            .append_basic_block(self.current_function.unwrap(), "do_body");
+        let loop_cond = self
+            .context
+            .append_basic_block(self.current_function.unwrap(), "do_cond");
+        let loop_end = self
+            .context
+            .append_basic_block(self.current_function.unwrap(), "do_end");
+
+        self.push_loop_context(loop_end, loop_body);
+
+        self.builder
+            .build_unconditional_branch(loop_body)
+            .map_err(|e| format!("Failed to build branch: {:?}", e))?;
+
+        self.builder.position_at_end(loop_body);
+        self.generate_statement(body)?;
+        if !self.current_block_terminator() {
+            self.builder
+                .build_unconditional_branch(loop_cond)
+                .map_err(|e| format!("Failed to build branch: {:?}", e))?;
+        }
+
+        self.builder.position_at_end(loop_cond);
+        let condition_value = self.generate_expressions(condition)?;
+        let condition_bool = self.build_not_zero(condition_value)?;
+        self.builder
+            .build_conditional_branch(condition_bool, loop_body, loop_end)
+            .map_err(|e| format!("Failed to build conditional branch: {:?}", e))?;
+
+        self.pop_loop_context();
+        self.builder.position_at_end(loop_end);
+        Ok(())
+    }
+
+    fn generate_while_statement(
+        &mut self,
+        condition: &Expression,
+        then_branch: &Box<Statement>,
+    ) -> Result<(), String> {
+        let loop_cond = self
+            .context
+            .append_basic_block(self.current_function.unwrap(), "loop_cond");
+        let loop_body = self
+            .context
+            .append_basic_block(self.current_function.unwrap(), "loop_body");
+        let loop_end = self
+            .context
+            .append_basic_block(self.current_function.unwrap(), "loop_end");
+
+        self.push_loop_context(loop_end, loop_body);
+
+        self.builder
+            .build_unconditional_branch(loop_cond)
+            .map_err(|e| format!("Failed to build branch: {:?}", e))?;
+
+        self.builder.position_at_end(loop_cond);
+        let condition_value = self.generate_expressions(condition)?;
+        let condition_bool = self.build_not_zero(condition_value)?;
+        self.builder
+            .build_conditional_branch(condition_bool, loop_body, loop_end)
+            .map_err(|e| format!("Failed to build conditional branch: {:?}", e))?;
+
+        self.builder.position_at_end(loop_body);
+        self.generate_statement(then_branch)?;
+        if !self.current_block_terminator() {
+            self.builder
+                .build_unconditional_branch(loop_cond)
+                .map_err(|e| format!("Failed to build branch: {:?}", e))?;
+        }
+
+        self.pop_loop_context();
+        self.builder.position_at_end(loop_end);
         Ok(())
     }
 
@@ -555,8 +675,6 @@ impl<'ctx> LLVMCodeGenerator<'ctx> {
                     .map_err(|e| format!("failed to extend boolean: {e}"))?;
 
                 Ok(result.into())
-
-                // Ok(phi.as_basic_value())
             }
             _ => {
                 let left_val = self.generate_expressions(left)?;

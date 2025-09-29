@@ -103,6 +103,12 @@ pub enum Statement {
         body: Box<Statement>,
         condition: Expression,
     },
+    For {
+        counter_declaration: Option<Box<Statement>>,
+        incrementor: Option<Expression>,
+        condition: Option<Expression>,
+        body: Box<Statement>,
+    },
     Break,
     //TODO:
 }
@@ -384,12 +390,64 @@ impl Parser {
             self.parse_while_flow()
         } else if self.check_token_type(&TokenType::Do) {
             self.parse_do_while_flow()
+        } else if self.check_token_type(&TokenType::For) {
+            self.parse_for_statement()
         } else {
             let expr = self.parse_expression()?;
             self.consume_type(&TokenType::Semicolon, "expected a semicolon")?;
             Ok(Statement::Expression(expr))
         }
     }
+
+    fn parse_for_statement(&mut self) -> ParseResult<Statement> {
+        self.consume_type(&TokenType::For, "for loop starts with a for keyword")?;
+        self.consume_type(&TokenType::LeftParen, "expected ( after for keyword")?;
+
+        let init = if self.check_token_type(&TokenType::Semicolon) {
+            self.consume_type(&TokenType::Semicolon, "expectd ;")?;
+            None
+        } else if self
+            .peek()
+            .is_some_and(|t| self.is_parameter_type(t.token_type()))
+        {
+            Some(Box::new(self.parse_var_declaration()?))
+        } else {
+            let expr = self.parse_expression()?;
+            self.consume_type(&TokenType::Semicolon, "expected ; after initiation")?;
+            Some(Box::new(Statement::Expression(expr)))
+        };
+
+        if init.is_none() {}
+
+        let condition = if self.check_token_type(&TokenType::Semicolon) {
+            self.consume_type(&TokenType::Semicolon, "expected ;")?;
+            None
+        } else {
+            let expr = self.parse_expression()?;
+            self.consume_type(&TokenType::Semicolon, "expected a semicolon")?;
+            Some(expr)
+        };
+
+        let increment = if self.check_token_type(&TokenType::RightParen) {
+            self.consume_type(&TokenType::Semicolon, "expected )")?;
+            None
+        } else {
+            Some(self.parse_expression()?)
+        };
+
+        self.consume_type(&TokenType::RightParen, "expected a )")?;
+        *self.loop_depth.borrow_mut() += 1;
+        let body = Box::new(self.parse_statement()?);
+        *self.loop_depth.borrow_mut() -= 1;
+
+        Ok(Statement::For {
+            counter_declaration: init,
+            incrementor: increment,
+            condition: condition,
+            body,
+        })
+    }
+
     fn parse_do_while_flow(&mut self) -> ParseResult<Statement> {
         self.consume_type(&TokenType::Do, "Expected a do keyword")?;
 
