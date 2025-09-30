@@ -172,6 +172,12 @@ impl<'ctx> LLVMCodeGenerator<'ctx> {
     }
 
     fn generate_function(&mut self, function: &Function) -> Result<(), String> {
+        // all functions are delcared in declare_functions method. so i shouldnt generate anything
+        // in here for forward declarations
+        if function.forward_dec {
+            return Ok(());
+        }
+
         let fn_value = self.function_table[&function.name.name];
         self.current_function = Some(fn_value);
 
@@ -204,7 +210,16 @@ impl<'ctx> LLVMCodeGenerator<'ctx> {
             }
         }
 
-        self.generate_statement(&function.body)?;
+        if let Statement::Block(statements) = &function.body {
+            for stmt in statements {
+                self.generate_statement(stmt)?;
+                if self.current_block_terminator() {
+                    break;
+                }
+            }
+        } else {
+            return Err("function must have a body".to_string());
+        }
 
         if !self.current_block_terminator() {
             if matches!(function.return_type, Types::Void) {
@@ -412,10 +427,6 @@ impl<'ctx> LLVMCodeGenerator<'ctx> {
             }
         }
         let llvm_type = self.llvm_type_from_ast(var_type)?;
-        // let alloca = self
-        //     .builder
-        //     .build_alloca(llvm_type, &name.name)
-        //     .map_err(|e| format!("failed to build alloca: {e}"))?;
         let alloca = if let Some(func) = self.current_function {
             let entry_block = func.get_first_basic_block().unwrap();
             let current_block = self.builder.get_insert_block().unwrap();

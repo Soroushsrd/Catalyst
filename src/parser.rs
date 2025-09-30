@@ -16,11 +16,7 @@
 * 3. Trade-offs: We gain simpler code at the cost of potential runtime panics if we
 *    violate borrowing rules. We mitigate this by carefully structuring our method calls
 *    and using local variables to break up overlapping borrows.
-
-* TODO: implement alternative methods for benchmarking purposes
-* Alternative approaches would include separating mutable state into a separate structure
-* or implementing a non-recursive algorithm for expression parsing.
-*/
+*********************************/
 use crate::{
     errors::{CompilerError, ErrorType},
     expect_token,
@@ -44,8 +40,8 @@ pub struct Function {
     pub name: Identifier,
     pub body: Statement,
     pub parameters: Vec<Parameter>,
-    #[allow(dead_code)]
     pub return_type: Types,
+    pub forward_dec: bool,
 }
 
 /// represents variable names, function names,etc
@@ -65,7 +61,6 @@ pub struct Parameter {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Types {
     Void,
-    #[allow(dead_code)]
     Int,
     Long,
     Char,
@@ -194,7 +189,6 @@ impl Parser {
 
         // TODO: includes could be handled before this operation
 
-        // TODO: forward declaration is not yet handled. i should make sure this part can handle that
         while !self.is_at_end() {
             match self.parse_function() {
                 Ok(function) => functions.push(function),
@@ -204,6 +198,8 @@ impl Parser {
                 }
             }
         }
+
+        self.validate_function_decs(&functions);
 
         if self.errors.borrow().is_empty() {
             if !functions.iter().any(|f| f.name.name == "main") {
@@ -223,6 +219,7 @@ impl Parser {
         }
     }
     /// considering <return type> <function name>(<params>) {<statements>}
+    /// can distinguish between forward declarations and complete functions
     pub fn parse_function(&mut self) -> ParseResult<Function> {
         let return_type = self.parse_type()?;
 
@@ -232,15 +229,23 @@ impl Parser {
         let parameters = self.parse_parameters()?;
         self.consume_type(&TokenType::RightParen, "Expected ')' after parameters")?;
 
-        let body = self.parse_block_statement()?;
+        let (body, forward_dec) = if self.check_token_type(&TokenType::Semicolon) {
+            self.advance();
+            (Statement::Block(Vec::new()), true)
+        } else {
+            let body = self.parse_block_statement()?;
+            (body, false)
+        };
 
         Ok(Function {
             name,
             body,
             parameters,
             return_type,
+            forward_dec,
         })
     }
+
     /// used to parse function return type
     fn parse_type(&mut self) -> ParseResult<Types> {
         let token = expect_token!(self, ErrorType::UnexpectedToken, "Unexpected end of file");
@@ -956,6 +961,122 @@ impl Parser {
                 }
             }
             self.advance();
+        }
+    }
+
+    fn validate_function_decs(&self, functions: &[Function]) {
+        // let mut errors: Vec<CompilerError> = Vec::with_capacity(5);
+        let forward_decs = functions
+            .iter()
+            .filter(|f| f.forward_dec)
+            .collect::<Vec<&Function>>();
+
+        for forward_dec in forward_decs {
+            let implementations = functions
+                .iter()
+                .filter(|f| !f.forward_dec && f.name.name == forward_dec.name.name)
+                .collect::<Vec<&Function>>();
+
+            // TODO: find a way to add the correct line/column number for these errors
+            if implementations.is_empty() {
+                self.errors.borrow_mut().push(CompilerError::new(
+                    ErrorType::SemanticError,
+                    1,
+                    1,
+                    &format!(
+                        "forward declaration {} has no implementation",
+                        forward_dec.name.name
+                    ),
+                ));
+                continue;
+            }
+
+            if implementations.len() > 1 {
+                self.errors.borrow_mut().push(CompilerError::new(
+                    ErrorType::SemanticError,
+                    1,
+                    1,
+                    &format!(
+                        "forward declaration {} has multiple implementation",
+                        forward_dec.name.name
+                    ),
+                ));
+                continue;
+            }
+
+            let implementation = implementations[0];
+
+            if forward_dec.return_type != implementation.return_type {
+                self.errors.borrow_mut().push(CompilerError::new(
+                    ErrorType::TypeError,
+                    1,
+                    1,
+                    &format!(
+                        "forward declaration {} has different return type({:?}) than its implementation({:?})",
+                        forward_dec.name.name,
+                        forward_dec.return_type,
+                        implementation.return_type
+                    ),
+                ));
+                continue;
+            }
+
+            if forward_dec.parameters.len() != implementation.parameters.len() {
+                self.errors.borrow_mut().push(CompilerError::new(
+                    ErrorType::TypeError,
+                    1,
+                    1,
+                    &format!(
+                        "forward declaration {} has different parameters than its implementation",
+                        forward_dec.name.name
+                    ),
+                ));
+                continue;
+            }
+
+            for (i, (dec_param, imp_param)) in forward_dec
+                .parameters
+                .iter()
+                .zip(implementation.parameters.iter())
+                .enumerate()
+            {
+                if dec_param.parameter_type != imp_param.parameter_type {
+                    self.errors.borrow_mut().push(CompilerError::new(
+                        ErrorType::TypeError,
+                        1,
+                        1,
+                        &format!(
+                            "Parameter {} of {} has a different type than its implementation",
+                            i + 1,
+                            forward_dec.name.name
+                        ),
+                    ));
+                    continue;
+                }
+            }
+        }
+        self.check_for_mult_imp(functions);
+    }
+
+    fn check_for_mult_imp(&self, functions: &[Function]) {
+        let implementations = functions
+            .iter()
+            .filter(|f| !f.forward_dec)
+            .collect::<Vec<_>>();
+        for i in 0..implementations.len() {
+            for j in (i + 1)..implementations.len() {
+                if implementations[i].name.name == implementations[j].name.name {
+                    self.errors.borrow_mut().push(CompilerError::new(
+                        ErrorType::SemanticError,
+                        1,
+                        1,
+                        &format!(
+                            "There are multiple forward declarations for {}",
+                            implementations[i].name.name
+                        ),
+                    ));
+                }
+            }
         }
     }
 }
