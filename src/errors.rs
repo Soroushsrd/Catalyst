@@ -9,7 +9,6 @@ pub struct CompilerError {
 }
 
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub enum ErrorType {
     SyntaxError,
     SemanticError,
@@ -19,6 +18,12 @@ pub enum ErrorType {
     MissingToken,
     UnexpectedToken,
     InvalidOperation,
+}
+
+impl Default for CompilerError {
+    fn default() -> Self {
+        Self::new(ErrorType::InvalidOperation, 1, 1, "")
+    }
 }
 
 impl CompilerError {
@@ -33,16 +38,20 @@ impl CompilerError {
         }
     }
 
-    pub fn with_source_line(mut self, source_line: &str) -> Self {
-        self.source_line = Some(source_line.to_string());
-        self
+    pub fn with_source_line(self, source_line: &str) -> Self {
+        CompilerError {
+            source_line: Some(source_line.to_string()),
+            ..self
+        }
     }
 
     //TODO: how can we comeup with the best suggestions?
     #[allow(dead_code)]
-    pub fn with_suggestion(mut self, suggestion: &str) -> Self {
-        self.suggestion = Some(suggestion.to_string());
-        self
+    pub fn with_suggestion(self, suggestion: &str) -> Self {
+        CompilerError {
+            suggestion: Some(suggestion.to_string()),
+            ..self
+        }
     }
 
     pub fn format_error(&self) -> String {
@@ -71,6 +80,7 @@ impl CompilerError {
 
         output
     }
+
     fn error_code(&self) -> &str {
         match self.error_type {
             ErrorType::SyntaxError => "E001",

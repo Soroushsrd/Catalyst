@@ -248,7 +248,12 @@ impl Parser {
 
     /// used to parse function return type
     fn parse_type(&mut self) -> ParseResult<Types> {
-        let token = expect_token!(self, ErrorType::UnexpectedToken, "Unexpected end of file");
+        let token = expect_token!(
+            self,
+            ErrorType::UnexpectedToken,
+            "Unexpected end of file",
+            None
+        );
         let type_ = match token.token_type() {
             TokenType::Int => Ok(Types::Int),
             TokenType::Void => Ok(Types::Void),
@@ -257,7 +262,11 @@ impl Parser {
             TokenType::Float => Ok(Types::Float),
             TokenType::Double => Ok(Types::Double),
             TokenType::Pointer(ptr) => Ok(Types::Pointer(ptr.clone())),
-            _ => Err(self.error(ErrorType::TypeError, "Expected type (int or void)")),
+            _ => Err(self.error(
+                ErrorType::TypeError,
+                "Expected type",
+                Some("if your function doesn't return anything, use 'void' as return type"),
+            )),
         };
 
         self.advance();
@@ -266,10 +275,15 @@ impl Parser {
     /// parses identifiers. These identifiers could be variable names,
     /// method names, and so on!
     fn parse_identifiers(&self) -> ParseResult<Identifier> {
-        let ident = expect_token!(self, ErrorType::UnexpectedToken, "Unexpected end of file");
+        let ident = expect_token!(
+            self,
+            ErrorType::UnexpectedToken,
+            "Unexpected end of file",
+            None
+        );
         let expression = match ident.token_type() {
             TokenType::Identifier(name) => Ok(Identifier { name: name.clone() }),
-            _ => Err(self.error(ErrorType::SyntaxError, "Expected identifier")),
+            _ => Err(self.error(ErrorType::SyntaxError, "Expected identifier", None)),
         };
         self.advance();
         expression
@@ -323,7 +337,11 @@ impl Parser {
                         self.advance();
 
                         if parameters.len() >= 6 {
-                            return Err(self.error(ErrorType::SemanticError, "Too many parameters"));
+                            return Err(self.error(
+                                ErrorType::SemanticError,
+                                "Too many parameters",
+                                Some("keep the function paramters less than or equal to 6"),
+                            ));
                         }
                         let param_type = self.parse_parameter_type()?;
                         let name = if self.is_identifier() {
@@ -344,7 +362,12 @@ impl Parser {
     }
 
     fn parse_parameter_type(&self) -> ParseResult<Types> {
-        let token = expect_token!(self, ErrorType::UnexpectedToken, "Unexpected end of file");
+        let token = expect_token!(
+            self,
+            ErrorType::UnexpectedToken,
+            "Unexpected end of file",
+            None
+        );
         let param_type = match token.type_ {
             TokenType::Int => Types::Int,
             TokenType::Void => Types::Void,
@@ -352,7 +375,7 @@ impl Parser {
             TokenType::Long => Types::Long,
             TokenType::Float => Types::Float,
             TokenType::Double => Types::Double,
-            _ => return Err(self.error(ErrorType::TypeError, "Expected parameter type")),
+            _ => return Err(self.error(ErrorType::TypeError, "Expected parameter type", None)),
         };
         self.advance();
         Ok(param_type)
@@ -509,7 +532,11 @@ impl Parser {
                 then_branch: Box::new(then_branch),
             })
         } else {
-            Err(self.error(ErrorType::SyntaxError, "while loop must have a condition"))
+            Err(self.error(
+                ErrorType::SyntaxError,
+                "while loop must have a condition",
+                Some("specify some kind of condition for your loop"),
+            ))
         }
     }
     fn parse_if_flow(&mut self) -> ParseResult<Statement> {
@@ -532,7 +559,8 @@ impl Parser {
             if matches!(then_branch, Statement::VarDeclaration { .. }) {
                 return Err(self.error(
                     ErrorType::SyntaxError,
-                    "Variable declaration not allowed here (use braces to create a block)",
+                    "Variable declaration not allowed here",
+                    Some("remove this variable declaration"),
                 ));
             }
 
@@ -544,7 +572,8 @@ impl Parser {
                 if matches!(then_branch, Statement::VarDeclaration { .. }) {
                     return Err(self.error(
                         ErrorType::SyntaxError,
-                        "Variable declaration not allowed here (use braces to create a block)",
+                        "Variable declaration not allowed here",
+                        Some("remove this variable declaration"),
                     ));
                 }
 
@@ -561,6 +590,7 @@ impl Parser {
         Err(self.error(
             ErrorType::SyntaxError,
             "Conditiosns should be inside parenthesis",
+            Some("use parenthesis!"),
         ))
     }
 
@@ -603,6 +633,7 @@ impl Parser {
             return Err(self.error(
                 ErrorType::SemanticError,
                 "continue statement not withing a loop",
+                Some("remove this continue statement"),
             ));
         }
 
@@ -617,6 +648,7 @@ impl Parser {
             return Err(self.error(
                 ErrorType::SemanticError,
                 "break statement not within a loop",
+                Some("remove this break statement"),
             ));
         }
 
@@ -672,7 +704,11 @@ impl Parser {
                     value: Box::new(value),
                 })
             } else {
-                Err(self.error(ErrorType::InvalidAssignment, "Invalid assignment target"))
+                Err(self.error(
+                    ErrorType::InvalidAssignment,
+                    "Invalid assignment target",
+                    Some("you need to use a '='"),
+                ))
             }
         } else {
             Ok(expr)
@@ -744,8 +780,13 @@ impl Parser {
     }
     /// parses unary expressions like ~, !, -
     fn parse_unary_expression(&self) -> ParseResult<Expression> {
-        let token =
-            expect_token!(self, ErrorType::UnexpectedToken, "Unexpected end of file").clone();
+        let token = expect_token!(
+            self,
+            ErrorType::UnexpectedToken,
+            "Unexpected end of file",
+            None
+        )
+        .clone();
 
         match token.token_type() {
             TokenType::Minus => {
@@ -776,6 +817,7 @@ impl Parser {
                 return Err(self.error(
                     ErrorType::UnexpectedToken,
                     "Unexpected end of input, expected expression",
+                    None,
                 ));
             }
         };
@@ -820,7 +862,7 @@ impl Parser {
                 expr
             }
             _ => {
-                return Err(self.error(ErrorType::SyntaxError, "Unexpected token"));
+                return Err(self.error(ErrorType::SyntaxError, "Unexpected token", None));
             }
         };
 
@@ -900,10 +942,15 @@ impl Parser {
         if self.check_token_type(token_type) {
             Ok(self.advance().unwrap())
         } else {
-            Err(self.error(ErrorType::MissingToken, error_msg))
+            Err(self.error(ErrorType::MissingToken, error_msg, None))
         }
     }
-    fn error(&self, error_type: ErrorType, message: &str) -> CompilerError {
+    fn error(
+        &self,
+        error_type: ErrorType,
+        message: &str,
+        suggestion: Option<&str>,
+    ) -> CompilerError {
         let (line, column) = if let Some(token) = self.peek() {
             (token.line(), token.column())
         } else if let Some(token) = self.previous() {
@@ -913,8 +960,15 @@ impl Parser {
         };
         let source_line = self.get_source_line(line);
 
-        CompilerError::new(error_type, line, column, message).with_source_line(&source_line)
+        if suggestion.is_some() {
+            CompilerError::new(error_type, line, column, message)
+                .with_source_line(&source_line)
+                .with_suggestion(suggestion.unwrap())
+        } else {
+            CompilerError::new(error_type, line, column, message).with_source_line(&source_line)
+        }
     }
+
     fn get_source_line(&self, line_number: usize) -> String {
         self.source
             .lines()
@@ -922,6 +976,7 @@ impl Parser {
             .unwrap_or("")
             .to_string()
     }
+
     pub fn get_errors(&self) -> Vec<CompilerError> {
         self.errors.borrow().clone()
     }
@@ -979,28 +1034,34 @@ impl Parser {
 
             // TODO: find a way to add the correct line/column number for these errors
             if implementations.is_empty() {
-                self.errors.borrow_mut().push(CompilerError::new(
-                    ErrorType::SemanticError,
-                    1,
-                    1,
-                    &format!(
-                        "forward declaration {} has no implementation",
-                        forward_dec.name.name
-                    ),
-                ));
+                self.errors.borrow_mut().push(
+                    CompilerError::new(
+                        ErrorType::SemanticError,
+                        1,
+                        1,
+                        &format!(
+                            "forward declaration {} has no implementation",
+                            forward_dec.name.name
+                        ),
+                    )
+                    .with_suggestion("you might want to implement it!"),
+                );
                 continue;
             }
 
             if implementations.len() > 1 {
-                self.errors.borrow_mut().push(CompilerError::new(
-                    ErrorType::SemanticError,
-                    1,
-                    1,
-                    &format!(
-                        "forward declaration {} has multiple implementation",
-                        forward_dec.name.name
-                    ),
-                ));
+                self.errors.borrow_mut().push(
+                    CompilerError::new(
+                        ErrorType::SemanticError,
+                        1,
+                        1,
+                        &format!(
+                            "forward declaration {} has multiple implementation",
+                            forward_dec.name.name
+                        ),
+                    )
+                    .with_suggestion("remove one of them"),
+                );
                 continue;
             }
 
@@ -1017,20 +1078,23 @@ impl Parser {
                         forward_dec.return_type,
                         implementation.return_type
                     ),
-                ));
+                ).with_suggestion("decide on one type!"));
                 continue;
             }
 
             if forward_dec.parameters.len() != implementation.parameters.len() {
-                self.errors.borrow_mut().push(CompilerError::new(
-                    ErrorType::TypeError,
-                    1,
-                    1,
-                    &format!(
+                self.errors.borrow_mut().push(
+                    CompilerError::new(
+                        ErrorType::TypeError,
+                        1,
+                        1,
+                        &format!(
                         "forward declaration {} has different parameters than its implementation",
                         forward_dec.name.name
                     ),
-                ));
+                    )
+                    .with_suggestion("you might want to reconsider your implementation"),
+                );
                 continue;
             }
 
@@ -1066,15 +1130,18 @@ impl Parser {
         for i in 0..implementations.len() {
             for j in (i + 1)..implementations.len() {
                 if implementations[i].name.name == implementations[j].name.name {
-                    self.errors.borrow_mut().push(CompilerError::new(
-                        ErrorType::SemanticError,
-                        1,
-                        1,
-                        &format!(
-                            "There are multiple forward declarations for {}",
-                            implementations[i].name.name
-                        ),
-                    ));
+                    self.errors.borrow_mut().push(
+                        CompilerError::new(
+                            ErrorType::SemanticError,
+                            1,
+                            1,
+                            &format!(
+                                "There are multiple forward declarations for {}",
+                                implementations[i].name.name
+                            ),
+                        )
+                        .with_suggestion("remove one declaration"),
+                    );
                 }
             }
         }

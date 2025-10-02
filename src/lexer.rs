@@ -102,6 +102,7 @@ impl Scanner {
                     self.add_error(
                         ErrorType::UnexpectedToken,
                         &format!("Unexpected character {c}"),
+                        None,
                     );
                     TokenType::Error(format!("Unexpected character: {c}"))
                 };
@@ -114,6 +115,7 @@ impl Scanner {
                     self.add_error(
                         ErrorType::UnexpectedToken,
                         &format!("Unexpected character {c}"),
+                        Some("comments start with //"),
                     );
 
                     TokenType::Error(format!("Unexpected character: {c}"))
@@ -176,6 +178,7 @@ impl Scanner {
                     self.add_error(
                         ErrorType::UnexpectedToken,
                         &format!("Unexpected character {c}"),
+                        Some("something should be removed here!"),
                     );
                     self.add_token(TokenType::Error(format!("Unexpected character: {c}")));
                 }
@@ -255,7 +258,11 @@ impl Scanner {
             self.advance();
         }
         if self.current >= self.chars.len() {
-            self.add_error(ErrorType::SyntaxError, "Unterminated string");
+            self.add_error(
+                ErrorType::SyntaxError,
+                "Unterminated string",
+                Some("terminate your strings with a single \" "),
+            );
             return;
         }
         self.advance();
@@ -279,7 +286,11 @@ impl Scanner {
             }
             self.advance();
         }
-        self.add_error(ErrorType::SyntaxError, "Unterminated comment block");
+        self.add_error(
+            ErrorType::SyntaxError,
+            "Unterminated comment block",
+            Some("multi-line comments should be terminated with */"),
+        );
     }
     /// matches the expected char agains the current char
     /// in the buffer and moves one step forward to account
@@ -341,10 +352,17 @@ impl Scanner {
             self.start_column,
         ));
     }
-    fn add_error(&mut self, error_type: ErrorType, message: &str) {
+    fn add_error(&mut self, error_type: ErrorType, message: &str, suggestion: Option<&str>) {
         let source_line = self.get_current_line();
-        let error = CompilerError::new(error_type, self.line, self.column, message)
-            .with_source_line(source_line);
+        let error = if suggestion.is_some() {
+            CompilerError::new(error_type, self.line, self.column, message)
+                .with_source_line(source_line)
+                .with_suggestion(suggestion.unwrap())
+        } else {
+            CompilerError::new(error_type, self.line, self.column, message)
+                .with_source_line(source_line)
+        };
+
         self.errors.push(error);
     }
     fn get_current_line(&self) -> &str {
