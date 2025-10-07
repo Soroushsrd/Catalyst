@@ -48,6 +48,7 @@ A simple compiler written in Rust that uses LLVM to compile C code.
 - [x] **Local variable scoping**
 - [x] **Function calls with argument passing**
 - [x] **Multiple parameter support** (currently limited to 6 due to calling convention)
+- [x] **Global variable declaration**
 
 #### Control Flow
 
