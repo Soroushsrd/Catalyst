@@ -70,7 +70,7 @@ A simple compiler written in Rust that uses LLVM to compile C code.
 - [ ] **Basic optimizations** (constant folding, dead code elimination)
 - [x] **Better error messages** with line numbers and suggestions
 - [x] **Debugging information generation**
-- [ ] **Standard library functions** (`printf`, etc.)
+- [x] **Standard library functions** (`printf`, etc.)
 
 ### Language Extensions
 
@@ -109,8 +109,7 @@ The compiler follows a traditional three-phase design:
 ### Prerequisites
 
 - Rust compiler
-- GNU Assembler (`as`)
-- GNU Linker (`ld`)
+- Clang
 - LLVM 18.1 (Just to compile Catalyst)
 
 ### Building and Running
