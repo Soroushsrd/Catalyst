@@ -1033,21 +1033,22 @@ impl Parser {
                 .collect::<Vec<&Function>>();
 
             // TODO: find a way to add the correct line/column number for these errors
-            if implementations.is_empty() {
-                self.errors.borrow_mut().push(
-                    CompilerError::new(
-                        ErrorType::SemanticError,
-                        1,
-                        1,
-                        &format!(
-                            "forward declaration {} has no implementation",
-                            forward_dec.name.name
-                        ),
-                    )
-                    .with_suggestion("you might want to implement it!"),
-                );
-                continue;
-            }
+            //
+            // if implementations.is_empty() {
+            //     self.errors.borrow_mut().push(
+            //         CompilerError::new(
+            //             ErrorType::SemanticError,
+            //             1,
+            //             1,
+            //             &format!(
+            //                 "forward declaration '{}' has no implementation",
+            //                 forward_dec.name.name
+            //             ),
+            //         )
+            //         .with_suggestion("you might want to implement it!"),
+            //     );
+            //     continue;
+            // }
 
             if implementations.len() > 1 {
                 self.errors.borrow_mut().push(
@@ -1056,7 +1057,7 @@ impl Parser {
                         1,
                         1,
                         &format!(
-                            "forward declaration {} has multiple implementation",
+                            "forward declaration '{}' has multiple implementation",
                             forward_dec.name.name
                         ),
                     )
@@ -1065,61 +1066,63 @@ impl Parser {
                 continue;
             }
 
-            let implementation = implementations[0];
+            if !implementations.is_empty() {
+                let implementation = implementations[0];
 
-            if forward_dec.return_type != implementation.return_type {
-                self.errors.borrow_mut().push(CompilerError::new(
+                if forward_dec.return_type != implementation.return_type {
+                    self.errors.borrow_mut().push(CompilerError::new(
                     ErrorType::TypeError,
                     1,
                     1,
                     &format!(
-                        "forward declaration {} has different return type({:?}) than its implementation({:?})",
+                        "forward declaration '{}' has different return type({:?}) than its implementation({:?})",
                         forward_dec.name.name,
                         forward_dec.return_type,
                         implementation.return_type
                     ),
                 ).with_suggestion("decide on one type!"));
-                continue;
-            }
+                    continue;
+                }
 
-            if forward_dec.parameters.len() != implementation.parameters.len() {
-                self.errors.borrow_mut().push(
+                if forward_dec.parameters.len() != implementation.parameters.len() {
+                    self.errors.borrow_mut().push(
                     CompilerError::new(
                         ErrorType::TypeError,
                         1,
                         1,
                         &format!(
-                        "forward declaration {} has different parameters than its implementation",
+                        "forward declaration '{}' has different parameters than its implementation",
                         forward_dec.name.name
                     ),
                     )
                     .with_suggestion("you might want to reconsider your implementation"),
                 );
-                continue;
-            }
+                    continue;
+                }
 
-            for (i, (dec_param, imp_param)) in forward_dec
-                .parameters
-                .iter()
-                .zip(implementation.parameters.iter())
-                .enumerate()
-            {
-                if dec_param.parameter_type != imp_param.parameter_type {
-                    self.errors.borrow_mut().push(CompilerError::new(
+                for (i, (dec_param, imp_param)) in forward_dec
+                    .parameters
+                    .iter()
+                    .zip(implementation.parameters.iter())
+                    .enumerate()
+                {
+                    if dec_param.parameter_type != imp_param.parameter_type {
+                        self.errors.borrow_mut().push(CompilerError::new(
                         ErrorType::TypeError,
                         1,
                         1,
                         &format!(
-                            "Parameter {} of {} has a different type than its implementation",
+                            "Parameter '{}' of '{}' has a different type than its implementation",
                             i + 1,
                             forward_dec.name.name
                         ),
                     ));
-                    continue;
+                        continue;
+                    }
                 }
             }
+            self.check_for_mult_imp(functions);
         }
-        self.check_for_mult_imp(functions);
     }
 
     fn check_for_mult_imp(&self, functions: &[Function]) {
@@ -1136,7 +1139,7 @@ impl Parser {
                             1,
                             1,
                             &format!(
-                                "There are multiple forward declarations for {}",
+                                "There are multiple forward declarations for '{}'",
                                 implementations[i].name.name
                             ),
                         )

@@ -13,6 +13,7 @@ pub enum ErrorType {
     SyntaxError,
     SemanticError,
     TypeError,
+    #[allow(dead_code)]
     UndefinedVariable,
     InvalidAssignment,
     MissingToken,

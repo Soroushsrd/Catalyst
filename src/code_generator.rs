@@ -65,77 +65,77 @@ impl<'ctx> LLVMCodeGenerator<'ctx> {
             self.generate_function(function)?;
         }
 
-        self.generate_start_function()?;
+        // self.generate_start_function()?;
         if let Err(e) = self.module.verify() {
             return Err(format!("LLVM module verification failed: {e}"));
         }
         Ok(())
     }
 
-    fn generate_start_function(&mut self) -> Result<(), String> {
-        // void _start()
-        let start_fn_type = self.context.void_type().fn_type(&[], false);
-        let start_fn = self.module.add_function("_start", start_fn_type, None);
-
-        let entry_block = self.context.append_basic_block(start_fn, "entry");
-        self.builder.position_at_end(entry_block);
-
-        // calling main function
-        let main_fn = self
-            .function_table
-            .get("main")
-            .ok_or("No main function found")?;
-
-        let main_result = self
-            .builder
-            .build_call(*main_fn, &[], "main_result")
-            .map_err(|e| format!("Failed to build call to main: {e}"))?;
-
-        // the return value from main (should be i32)
-        let exit_code = if let Some(return_val) = main_result.try_as_basic_value().left() {
-            // covnerting to i64 for syscall
-            self.builder
-                .build_int_z_extend(
-                    return_val.into_int_value(),
-                    self.context.i64_type(),
-                    "exit_code",
-                )
-                .map_err(|e| format!("Failed to extend exit code: {e}"))?
-        } else {
-            self.context.i64_type().const_int(0, false)
-        };
-
-        let asm_type = self.context.void_type().fn_type(
-            &[
-                self.context.i64_type().into(),
-                self.context.i64_type().into(),
-            ],
-            false,
-        );
-
-        let inline_asm = self.context.create_inline_asm(
-            asm_type,
-            "mov $0, %rax\nmov $1, %rdi\nsyscall".to_string(),
-            "r,r,~{rax},~{rdi}".to_string(),
-            true,  // has side effects
-            false, // not aligned stack
-            None,  // no dialect
-            false, // can_throw - 7th argument
-        );
-
-        let syscall_number = self.context.i64_type().const_int(60, false);
-        let args = &[syscall_number.into(), exit_code.into()];
-
-        self.builder
-            .build_indirect_call(asm_type, inline_asm, args, "exit")
-            .map_err(|e| format!("Failed to build syscall: {e}"))?;
-
-        self.builder
-            .build_unreachable()
-            .map_err(|e| format!("Failed to build unreachable: {e}"))?;
-
-        Ok(())
-    }
+    // fn generate_start_function(&mut self) -> Result<(), String> {
+    //     // void _start()
+    //     let start_fn_type = self.context.void_type().fn_type(&[], false);
+    //     let start_fn = self.module.add_function("_start", start_fn_type, None);
+    //
+    //     let entry_block = self.context.append_basic_block(start_fn, "entry");
+    //     self.builder.position_at_end(entry_block);
+    //
+    //     // calling main function
+    //     let main_fn = self
+    //         .function_table
+    //         .get("main")
+    //         .ok_or("No main function found")?;
+    //
+    //     let main_result = self
+    //         .builder
+    //         .build_call(*main_fn, &[], "main_result")
+    //         .map_err(|e| format!("Failed to build call to main: {e}"))?;
+    //
+    //     // the return value from main (should be i32)
+    //     let exit_code = if let Some(return_val) = main_result.try_as_basic_value().left() {
+    //         // covnerting to i64 for syscall
+    //         self.builder
+    //             .build_int_z_extend(
+    //                 return_val.into_int_value(),
+    //                 self.context.i64_type(),
+    //                 "exit_code",
+    //             )
+    //             .map_err(|e| format!("Failed to extend exit code: {e}"))?
+    //     } else {
+    //         self.context.i64_type().const_int(0, false)
+    //     };
+    //
+    //     let asm_type = self.context.void_type().fn_type(
+    //         &[
+    //             self.context.i64_type().into(),
+    //             self.context.i64_type().into(),
+    //         ],
+    //         false,
+    //     );
+    //
+    //     let inline_asm = self.context.create_inline_asm(
+    //         asm_type,
+    //         "mov $0, %rax\nmov $1, %rdi\nsyscall".to_string(),
+    //         "r,r,~{rax},~{rdi}".to_string(),
+    //         true,  // has side effects
+    //         false, // not aligned stack
+    //         None,  // no dialect
+    //         false, // can_throw - 7th argument
+    //     );
+    //
+    //     let syscall_number = self.context.i64_type().const_int(60, false);
+    //     let args = &[syscall_number.into(), exit_code.into()];
+    //
+    //     self.builder
+    //         .build_indirect_call(asm_type, inline_asm, args, "exit")
+    //         .map_err(|e| format!("Failed to build syscall: {e}"))?;
+    //
+    //     self.builder
+    //         .build_unreachable()
+    //         .map_err(|e| format!("Failed to build unreachable: {e}"))?;
+    //
+    //     Ok(())
+    // }
 
     fn declare_functions(&mut self, functions: &[Function]) -> Result<(), String> {
         for function in functions {
@@ -952,25 +952,37 @@ impl<'ctx> LLVMCodeGenerator<'ctx> {
         name: &str,
         arguments: &[Expression],
     ) -> Result<BasicValueEnum<'ctx>, String> {
-        if let Some(&function) = self.function_table.get(name) {
-            let mut args: Vec<BasicValueEnum> = Vec::new();
-            for arg in arguments {
-                args.push(self.generate_expressions(arg)?);
-            }
-
-            let args_refs = args.iter().map(|v| (*v).into()).collect::<Vec<_>>();
-            let call_site = self
-                .builder
-                .build_call(function, &args_refs, "call")
-                .map_err(|e| format!("failed to build call: {e}"))?;
-
-            if let Some(return_val) = call_site.try_as_basic_value().left() {
-                Ok(return_val)
-            } else {
-                Ok(self.context.i32_type().const_int(0, false).into())
-            }
+        let function = if let Some(&func) = self.function_table.get(name) {
+            func
         } else {
-            Err(format!("unknown function: {name}"))
+            // function is not declared. to fix the issue with functions
+            // declared in libc and used in our codebases, we will declare them
+            // in here and assume that it will return an i32 (C default)
+            let param_type: Vec<_> = arguments
+                .iter()
+                .map(|_| self.context.i32_type().into())
+                .collect();
+            let fn_type = self.context.i32_type().fn_type(&param_type, false);
+            let func = self.module.add_function(name, fn_type, None);
+            self.function_table.insert(name.to_string(), func);
+            func
+        };
+
+        let mut args: Vec<BasicValueEnum> = Vec::new();
+        for arg in arguments {
+            args.push(self.generate_expressions(arg)?);
+        }
+
+        let args_refs = args.iter().map(|v| (*v).into()).collect::<Vec<_>>();
+        let call_site = self
+            .builder
+            .build_call(function, &args_refs, "call")
+            .map_err(|e| format!("failed to build call: {e}"))?;
+
+        if let Some(return_val) = call_site.try_as_basic_value().left() {
+            Ok(return_val)
+        } else {
+            Ok(self.context.i32_type().const_int(0, false).into())
         }
     }
 

@@ -62,21 +62,24 @@ fn run_file(path: &str) -> Result<()> {
 /// takes in the path to assembly file generated and an output filename
 /// using gnu ld and as, assembles and links the final output
 fn link_exe(object_file: &str, output_name: &str) -> Result<()> {
-    let mut linker_cmd = if cfg!(target_os = "windows") {
-        let mut cmd = Command::new("link");
-        cmd.args(["/ENTRY:main", "/SUBSYSTEM:CONSOLE"]);
-        cmd
-    } else {
-        let mut cmd = Command::new("ld");
-        cmd.args(["-e", "_start"]);
-        cmd
-    };
-
-    let status = linker_cmd.args([object_file, "-o", output_name]).status()?;
-
-    if !status.success() {
-        eprintln!("Linking failed");
-        return Err(ErrorKind::Other.into());
+    #[cfg(target_os = "windows")]
+    {
+        // On Windows, you still need Windows-specific linking
+        let mut cmd = Command::new("clang");
+        cmd.args([
+            object_file,
+            "-o",
+            output_name,
+            "-fuse-ld=lld", // Use LLVM's linker
+                            // Still needs Windows CRT and subsystem
+        ]);
+        cmd.status()?;
+    }
+    #[cfg(target_os = "linux")]
+    {
+        let mut cmd = Command::new("clang");
+        cmd.args([object_file, "-o", output_name]);
+        cmd.status()?;
     }
 
     // Clean up object file
@@ -127,8 +130,7 @@ fn run(source_code: &str, file_name: &str) -> Result<()> {
                 return Err(ErrorKind::Other.into());
             }
 
-            // println!("\n***LLVM IR***");
-            // codegen.print_ir();
+            codegen.print_ir();
 
             let object_file_name = format!("{file_name}.o");
             let obj_path = Path::new(&object_file_name);
