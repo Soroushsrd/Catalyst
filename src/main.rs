@@ -105,10 +105,10 @@ fn run(source_code: &str, file_name: &str) -> Result<()> {
         }
     }
 
-    // println!("***TOKENS***");
-    // for token in tokens.iter() {
-    //     println!("Token: {token:?}");
-    // }
+    println!("***TOKENS***");
+    for token in tokens.iter() {
+        println!("Token: {token:?}");
+    }
 
     let mut parser = Parser::new(tokens, source_code);
     match parser.parse() {
@@ -120,8 +120,8 @@ fn run(source_code: &str, file_name: &str) -> Result<()> {
                 return Err(ErrorKind::InvalidInput.into());
             }
 
-            // println!("\n***AST***");
-            // println!("{ast:#?}");
+            println!("\n***AST***");
+            println!("{ast:#?}");
             let context = Context::create();
             let mut codegen = LLVMCodeGenerator::new(&context, file_name);
 

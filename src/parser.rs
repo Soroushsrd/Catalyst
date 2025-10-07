@@ -30,6 +30,20 @@ type ParseResult<T> = Result<T, CompilerError>;
 #[derive(Debug, Clone)]
 pub struct Program {
     pub function_def: Vec<Function>,
+    pub global_vars: Vec<GlobalVariable>,
+}
+
+pub enum TopLvlDecs {
+    Function(Function),
+    GlobalVar(GlobalVariable),
+    //TODO:
+}
+
+#[derive(Debug, Clone)]
+pub struct GlobalVariable {
+    pub _type: Types,
+    pub name: Identifier,
+    pub initializer: Option<Expression>,
 }
 
 /// functions consist of a name (identifier) and a
@@ -57,7 +71,6 @@ pub struct Parameter {
     pub name: Option<Identifier>,
 }
 
-//WARNING: Could be merged with ReturnType enum
 #[derive(Debug, Clone, PartialEq)]
 pub enum Types {
     Void,
@@ -186,12 +199,14 @@ impl Parser {
     }
     pub fn parse(&mut self) -> Result<Program, Vec<CompilerError>> {
         let mut functions = Vec::with_capacity(5);
+        let mut globals = Vec::with_capacity(5);
 
         // TODO: includes could be handled before this operation
 
         while !self.is_at_end() {
-            match self.parse_function() {
-                Ok(function) => functions.push(function),
+            match self.parse_top_decs() {
+                Ok(TopLvlDecs::Function(func)) => functions.push(func),
+                Ok(TopLvlDecs::GlobalVar(glob)) => globals.push(glob),
                 Err(e) => {
                     self.errors.borrow_mut().push(e);
                     self.synchronize();
@@ -213,37 +228,56 @@ impl Parser {
             }
             Ok(Program {
                 function_def: functions,
+                global_vars: globals,
             })
         } else {
             Err(self.errors.borrow().clone())
         }
     }
-    /// considering <return type> <function name>(<params>) {<statements>}
-    /// can distinguish between forward declarations and complete functions
-    pub fn parse_function(&mut self) -> ParseResult<Function> {
-        let return_type = self.parse_type()?;
 
+    fn parse_top_decs(&mut self) -> ParseResult<TopLvlDecs> {
+        // let current_pos = *self.current.borrow();
+        let var_type = self.parse_type()?;
         let name = self.parse_identifiers()?;
+        if self.check_token_type(&TokenType::LeftParen) {
+            // then its a function dec and not a global variable
 
-        self.consume_type(&TokenType::LeftParen, "Expected '(' after function name")?;
-        let parameters = self.parse_parameters()?;
-        self.consume_type(&TokenType::RightParen, "Expected ')' after parameters")?;
+            self.consume_type(&TokenType::LeftParen, "Expected '(' after function name")?;
+            let parameters = self.parse_parameters()?;
+            self.consume_type(&TokenType::RightParen, "Expected ')' after parameters")?;
 
-        let (body, forward_dec) = if self.check_token_type(&TokenType::Semicolon) {
-            self.advance();
-            (Statement::Block(Vec::new()), true)
+            let (body, forward_dec) = if self.check_token_type(&TokenType::Semicolon) {
+                self.advance();
+                (Statement::Block(Vec::new()), true)
+            } else {
+                let body = self.parse_block_statement()?;
+                (body, false)
+            };
+
+            Ok(TopLvlDecs::Function(Function {
+                name,
+                body,
+                parameters,
+                return_type: var_type,
+                forward_dec,
+            }))
         } else {
-            let body = self.parse_block_statement()?;
-            (body, false)
-        };
-
-        Ok(Function {
-            name,
-            body,
-            parameters,
-            return_type,
-            forward_dec,
-        })
+            let initializer = if self.check_token_type(&TokenType::Equal) {
+                self.advance();
+                Some(self.parse_expression()?)
+            } else {
+                None
+            };
+            self.consume_type(
+                &TokenType::Semicolon,
+                "expected a semicolon at the end of the expression",
+            )?;
+            Ok(TopLvlDecs::GlobalVar(GlobalVariable {
+                _type: var_type,
+                name,
+                initializer,
+            }))
+        }
     }
 
     /// used to parse function return type

@@ -5,7 +5,7 @@ use inkwell::module::Module;
 use inkwell::targets::{CodeModel, FileType, RelocMode, Target, TargetMachine};
 use inkwell::types::BasicType;
 use inkwell::types::BasicTypeEnum;
-use inkwell::values::{BasicValueEnum, FunctionValue, IntValue};
+use inkwell::values::{BasicValueEnum, FunctionValue, GlobalValue, IntValue};
 use inkwell::{AddressSpace, IntPredicate, OptimizationLevel};
 
 use crate::parser::*;
@@ -37,8 +37,8 @@ pub struct LLVMCodeGenerator<'ctx> {
     loop_cont_stack: Vec<BasicBlock<'ctx>>,
     // current function being compiled
     current_function: Option<FunctionValue<'ctx>>,
-    // TODO: forward declaration table
     function_table: HashMap<String, FunctionValue<'ctx>>,
+    global_vars: HashMap<String, GlobalValue<'ctx>>,
 }
 
 impl<'ctx> LLVMCodeGenerator<'ctx> {
@@ -54,88 +54,63 @@ impl<'ctx> LLVMCodeGenerator<'ctx> {
             loop_cont_stack: vec![],
             current_function: None,
             function_table: HashMap::new(),
+            global_vars: HashMap::new(),
         }
     }
 
     /// prints the generated output into a file.
     /// generate LLVM IR for the entire program
     pub fn generate_program(&mut self, program: &Program) -> Result<(), String> {
+        for global in &program.global_vars {
+            self.declare_global_variable(global)?;
+        }
+
         self.declare_functions(&program.function_def)?;
         for function in &program.function_def {
             self.generate_function(function)?;
         }
 
-        // self.generate_start_function()?;
         if let Err(e) = self.module.verify() {
             return Err(format!("LLVM module verification failed: {e}"));
         }
         Ok(())
     }
 
-    // fn generate_start_function(&mut self) -> Result<(), String> {
-    //     // void _start()
-    //     let start_fn_type = self.context.void_type().fn_type(&[], false);
-    //     let start_fn = self.module.add_function("_start", start_fn_type, None);
-    //
-    //     let entry_block = self.context.append_basic_block(start_fn, "entry");
-    //     self.builder.position_at_end(entry_block);
-    //
-    //     // calling main function
-    //     let main_fn = self
-    //         .function_table
-    //         .get("main")
-    //         .ok_or("No main function found")?;
-    //
-    //     let main_result = self
-    //         .builder
-    //         .build_call(*main_fn, &[], "main_result")
-    //         .map_err(|e| format!("Failed to build call to main: {e}"))?;
-    //
-    //     // the return value from main (should be i32)
-    //     let exit_code = if let Some(return_val) = main_result.try_as_basic_value().left() {
-    //         // covnerting to i64 for syscall
-    //         self.builder
-    //             .build_int_z_extend(
-    //                 return_val.into_int_value(),
-    //                 self.context.i64_type(),
-    //                 "exit_code",
-    //             )
-    //             .map_err(|e| format!("Failed to extend exit code: {e}"))?
-    //     } else {
-    //         self.context.i64_type().const_int(0, false)
-    //     };
-    //
-    //     let asm_type = self.context.void_type().fn_type(
-    //         &[
-    //             self.context.i64_type().into(),
-    //             self.context.i64_type().into(),
-    //         ],
-    //         false,
-    //     );
-    //
-    //     let inline_asm = self.context.create_inline_asm(
-    //         asm_type,
-    //         "mov $0, %rax\nmov $1, %rdi\nsyscall".to_string(),
-    //         "r,r,~{rax},~{rdi}".to_string(),
-    //         true,  // has side effects
-    //         false, // not aligned stack
-    //         None,  // no dialect
-    //         false, // can_throw - 7th argument
-    //     );
-    //
-    //     let syscall_number = self.context.i64_type().const_int(60, false);
-    //     let args = &[syscall_number.into(), exit_code.into()];
-    //
-    //     self.builder
-    //         .build_indirect_call(asm_type, inline_asm, args, "exit")
-    //         .map_err(|e| format!("Failed to build syscall: {e}"))?;
-    //
-    //     self.builder
-    //         .build_unreachable()
-    //         .map_err(|e| format!("Failed to build unreachable: {e}"))?;
-    //
-    //     Ok(())
-    // }
+    fn declare_global_variable(&mut self, global: &GlobalVariable) -> Result<(), String> {
+        let llvm_type = self.llvm_type_from_ast(&global._type)?;
+
+        let global_var = self.module.add_global(llvm_type, None, &global.name.name);
+
+        let initializer: BasicValueEnum = if let Some(init_expr) = &global.initializer {
+            // For global variables, initializers must be constants
+            match init_expr {
+                Expression::Number(val) => match &global._type {
+                    Types::Int => self.context.i32_type().const_int(*val as u64, false).into(),
+                    Types::Long => self.context.i64_type().const_int(*val as u64, false).into(),
+                    Types::Char => self.context.i8_type().const_int(*val as u64, false).into(),
+                    Types::Float => self.context.f32_type().const_float(*val as f64).into(),
+                    Types::Double => self.context.f64_type().const_float(*val as f64).into(),
+                    _ => return Err("Unsupported global variable type".to_string()),
+                },
+                _ => {
+                    return Err(
+                        "Global variable initializers must be constant expressions".to_string()
+                    );
+                }
+            }
+        } else {
+            // Default zero initialization
+            self.get_zero_value(&global._type)?
+        };
+
+        global_var.set_initializer(&initializer);
+
+        // Store in our global variables map for lookup
+        self.global_vars
+            .insert(global.name.name.clone(), global_var);
+
+        Ok(())
+    }
 
     fn declare_functions(&mut self, functions: &[Function]) -> Result<(), String> {
         for function in functions {
@@ -893,10 +868,22 @@ impl<'ctx> LLVMCodeGenerator<'ctx> {
                 .builder
                 .build_load(llvm_type, ptr_value, &ident)
                 .map_err(|e| format!("failed to load variable: {e}"))?;
-            Ok(loaded)
-        } else {
-            Err(format!(" undefined variable: {ident}"))
+            return Ok(loaded);
         }
+        if let Some(global_var) = self.global_vars.get(ident) {
+            let global_ptr = global_var.as_pointer_value();
+            let global_type = global_var
+                .get_initializer()
+                .ok_or("global variable has no inititalizer")?
+                .get_type();
+
+            let loaded = self
+                .builder
+                .build_load(global_type, global_ptr, ident)
+                .map_err(|e| format!("failed to load global variable: {e}"))?;
+            return Ok(loaded);
+        }
+        Err(format!("undefined variable: {ident}"))
     }
 
     fn generate_ternary_op(
@@ -993,16 +980,21 @@ impl<'ctx> LLVMCodeGenerator<'ctx> {
     ) -> Result<BasicValueEnum<'ctx>, String> {
         let val = self.generate_expressions(value)?;
 
-        let var_info = if let Some(info) = self.lookup_variable(&target) {
-            info.value.into_pointer_value()
-        } else {
-            return Err(format!("Undefined variable in assignment: {}", target));
-        };
-
-        self.builder
-            .build_store(var_info, val)
-            .map_err(|e| format!("Failed to store: {:?}", e))?;
-        Ok(val)
+        if let Some(info) = self.lookup_variable(&target) {
+            let ptr = info.value.into_pointer_value();
+            self.builder
+                .build_store(ptr, val)
+                .map_err(|e| format!("Failed to store: {e:?}"))?;
+            return Ok(val);
+        }
+        if let Some(global_var) = self.global_vars.get(target) {
+            let ptr = global_var.as_pointer_value();
+            self.builder
+                .build_store(ptr, val)
+                .map_err(|e| format!("failed to store: {e:?}"))?;
+            return Ok(val);
+        }
+        return Err(format!("Undefined variable in assignment: {}", target));
     }
 
     fn generate_bitwise_not(
