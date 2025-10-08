@@ -47,7 +47,11 @@ fn run_file(path: &str) -> Result<()> {
 
     let source_path = Path::new(path).parent().unwrap_or(Path::new("."));
 
-    let output_path = source_path.join(file_name);
+    let output_path = cmd_args::get()
+        .output
+        .clone()
+        .map(|x| PathBuf::from_str(&x).unwrap())
+        .unwrap_or(source_path.join(file_name));
 
     run(&bytes_str, output_path.to_str().unwrap())?;
     Ok(())
