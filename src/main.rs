@@ -1,8 +1,10 @@
+mod cmd_args;
 mod code_generator;
 mod errors;
 mod lexer;
 mod macros;
 mod parser;
+
 use inkwell::context::Context;
 
 use crate::{
@@ -19,16 +21,9 @@ use std::{
     str::FromStr,
 };
 
-// TODO: use clap for cli purposes
-
 // WARNING: Fix all string allocations
 fn main() -> Result<()> {
-    let input: Vec<String> = std::env::args().collect();
-
-    match input.len() {
-        2 => run_file(&input[1])?,
-        _ => println!("Usage: Catalyst [filepath]"),
-    }
+    run_file(&cmd_args::get().input_file)?;
     Ok(())
 }
 
