@@ -1,8 +1,10 @@
+mod cmd_args;
 mod code_generator;
 mod errors;
 mod lexer;
 mod macros;
 mod parser;
+
 use inkwell::context::Context;
 
 use crate::{
@@ -19,16 +21,9 @@ use std::{
     str::FromStr,
 };
 
-// TODO: use clap for cli purposes
-
 // WARNING: Fix all string allocations
 fn main() -> Result<()> {
-    let input: Vec<String> = std::env::args().collect();
-
-    match input.len() {
-        2 => run_file(&input[1])?,
-        _ => println!("Usage: Catalyst [filepath]"),
-    }
+    run_file(&cmd_args::get().input_file)?;
     Ok(())
 }
 
@@ -52,7 +47,11 @@ fn run_file(path: &str) -> Result<()> {
 
     let source_path = Path::new(path).parent().unwrap_or(Path::new("."));
 
-    let output_path = source_path.join(file_name);
+    let output_path = cmd_args::get()
+        .output
+        .clone()
+        .map(|x| PathBuf::from_str(&x).unwrap())
+        .unwrap_or(source_path.join(file_name));
 
     run(&bytes_str, output_path.to_str().unwrap())?;
     Ok(())
