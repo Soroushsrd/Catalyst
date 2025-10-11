@@ -112,6 +112,7 @@ The compiler follows a traditional three-phase design:
 - Rust compiler
 - Clang
 - LLVM 18.1 (Just to compile Catalyst)
+- Polly (libpolly-18-dev)
 
 ### Building and Running
 
