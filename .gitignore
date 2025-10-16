@@ -3,4 +3,3 @@
 *.s
 Cargo.lock
 /target
-/tests
