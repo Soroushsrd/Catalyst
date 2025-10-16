@@ -857,7 +857,8 @@ impl<'ctx> LLVMCodeGenerator<'ctx> {
             }
         }
     }
-
+    /// semantic analysis ensures the identifier is declared
+    /// in here we focus on loading the correct LLVM value
     fn generate_identifier(&mut self, ident: &str) -> Result<BasicValueEnum<'ctx>, String> {
         if let Some(var_info) = self.lookup_variable(ident) {
             let var_type = var_info.var_type.clone();
@@ -1121,7 +1122,8 @@ impl<'ctx> LLVMCodeGenerator<'ctx> {
             self.scope_stack.pop();
         }
     }
-
+    /// semantic analysis has already validated that this variable exists
+    /// we are using this lookup to get the LLVM value and type information
     fn lookup_variable(&mut self, name: &str) -> Option<&VariableInfo<'ctx>> {
         for scope in self.scope_stack.iter().rev() {
             if let Some(var) = scope.get(name) {

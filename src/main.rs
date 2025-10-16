@@ -4,6 +4,7 @@ mod errors;
 mod lexer;
 mod macros;
 mod parser;
+mod semantic_analyzer;
 
 use inkwell::context::Context;
 
@@ -121,6 +122,15 @@ fn run(source_code: &str, file_name: &str) -> Result<()> {
 
             println!("\n***AST***");
             println!("{ast:#?}");
+
+            let mut analyzer = semantic_analyzer::SemanticAnalyzer::new();
+            if let Err(semantic_errors) = analyzer.analyze(&ast) {
+                for error in semantic_errors {
+                    eprintln!("{}", error.format_error());
+                }
+                return Err(ErrorKind::InvalidInput.into());
+            }
+
             let context = Context::create();
             let mut codegen = LLVMCodeGenerator::new(&context, file_name);
 

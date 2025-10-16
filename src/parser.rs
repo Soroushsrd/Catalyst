@@ -22,9 +22,10 @@ use crate::{
     expect_token,
     lexer::{Token, TokenType},
 };
-use std::cell::RefCell;
+use std::{cell::RefCell, collections::HashMap};
 
 type ParseResult<T> = Result<T, CompilerError>;
+
 /// a program is the first node in an AST
 /// it contains a single child which is the function
 #[derive(Debug, Clone)]
@@ -199,14 +200,40 @@ impl Parser {
     }
     pub fn parse(&mut self) -> Result<Program, Vec<CompilerError>> {
         let mut functions = Vec::with_capacity(5);
-        let mut globals = Vec::with_capacity(5);
+        let mut globals: Vec<GlobalVariable> = Vec::with_capacity(5);
 
         // TODO: includes could be handled before this operation
 
         while !self.is_at_end() {
             match self.parse_top_decs() {
-                Ok(TopLvlDecs::Function(func)) => functions.push(func),
-                Ok(TopLvlDecs::GlobalVar(glob)) => globals.push(glob),
+                Ok(TopLvlDecs::Function(func)) => {
+                    if globals.iter().any(|f| f.name.name == func.name.name) {
+                        let error = self.error(
+                            ErrorType::RedefinedVariable,
+                            &format!("name {} has already been defined!", &func.name.name),
+                            Some("choose a different name"),
+                        );
+                        self.errors.borrow_mut().push(error);
+                    } else {
+                        functions.push(func);
+                    }
+                }
+                Ok(TopLvlDecs::GlobalVar(glob)) => {
+                    if functions.iter().any(|f| f.name.name == glob.name.name)
+                        || globals
+                            .iter()
+                            .any(|f: &GlobalVariable| f.name.name == glob.name.name)
+                    {
+                        let error = self.error(
+                            ErrorType::RedefinedVariable,
+                            &format!("name {} has already been defined!", &glob.name.name),
+                            Some("choose a different name"),
+                        );
+                        self.errors.borrow_mut().push(error);
+                    } else {
+                        globals.push(glob);
+                    }
+                }
                 Err(e) => {
                     self.errors.borrow_mut().push(e);
                     self.synchronize();
@@ -241,7 +268,6 @@ impl Parser {
         let name = self.parse_identifiers()?;
         if self.check_token_type(&TokenType::LeftParen) {
             // then its a function dec and not a global variable
-
             self.consume_type(&TokenType::LeftParen, "Expected '(' after function name")?;
             let parameters = self.parse_parameters()?;
             self.consume_type(&TokenType::RightParen, "Expected ')' after parameters")?;
@@ -882,6 +908,7 @@ impl Parser {
                     }
 
                     self.consume_type(&TokenType::RightParen, "Expected ')' after arguments")?;
+
                     Expression::FunctionCall {
                         name: name.clone(),
                         arguments,
@@ -1054,7 +1081,6 @@ impl Parser {
     }
 
     fn validate_function_decs(&self, functions: &[Function]) {
-        // let mut errors: Vec<CompilerError> = Vec::with_capacity(5);
         let forward_decs = functions
             .iter()
             .filter(|f| f.forward_dec)
@@ -1120,17 +1146,17 @@ impl Parser {
 
                 if forward_dec.parameters.len() != implementation.parameters.len() {
                     self.errors.borrow_mut().push(
-                    CompilerError::new(
-                        ErrorType::TypeError,
-                        1,
-                        1,
-                        &format!(
+                        CompilerError::new(
+                            ErrorType::TypeError,
+                            1,
+                            1,
+                            &format!(
                         "forward declaration '{}' has different parameters than its implementation",
                         forward_dec.name.name
                     ),
-                    )
-                    .with_suggestion("you might want to reconsider your implementation"),
-                );
+                        )
+                        .with_suggestion("you might want to reconsider your implementation"),
+                    );
                     continue;
                 }
 
@@ -1142,15 +1168,15 @@ impl Parser {
                 {
                     if dec_param.parameter_type != imp_param.parameter_type {
                         self.errors.borrow_mut().push(CompilerError::new(
-                        ErrorType::TypeError,
-                        1,
-                        1,
-                        &format!(
+                            ErrorType::TypeError,
+                            1,
+                            1,
+                            &format!(
                             "Parameter '{}' of '{}' has a different type than its implementation",
                             i + 1,
                             forward_dec.name.name
                         ),
-                    ));
+                        ));
                         continue;
                     }
                 }

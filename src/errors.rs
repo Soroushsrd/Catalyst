@@ -13,12 +13,13 @@ pub enum ErrorType {
     SyntaxError,
     SemanticError,
     TypeError,
-    #[allow(dead_code)]
+    RedefinedVariable,
     UndefinedVariable,
     InvalidAssignment,
     MissingToken,
     UnexpectedToken,
     InvalidOperation,
+    UseBeforeDeclaration,
 }
 
 impl Default for CompilerError {
@@ -87,11 +88,13 @@ impl CompilerError {
             ErrorType::SyntaxError => "E001",
             ErrorType::SemanticError => "E002",
             ErrorType::TypeError => "E003",
-            ErrorType::UndefinedVariable => "E004",
-            ErrorType::InvalidAssignment => "E005",
-            ErrorType::MissingToken => "E006",
-            ErrorType::UnexpectedToken => "E007",
-            ErrorType::InvalidOperation => "E008",
+            ErrorType::RedefinedVariable => "E004",
+            ErrorType::UndefinedVariable => "E005",
+            ErrorType::InvalidAssignment => "E006",
+            ErrorType::MissingToken => "E007",
+            ErrorType::UnexpectedToken => "E008",
+            ErrorType::InvalidOperation => "E009",
+            ErrorType::UseBeforeDeclaration => "E010",
         }
     }
 }
