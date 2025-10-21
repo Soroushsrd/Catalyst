@@ -31,7 +31,7 @@ fn main() -> Result<()> {
 /// based on the input, extracts file name and then reads the file to a string
 /// then passes the file content to be parsed
 fn run_file(path: &str) -> Result<()> {
-    //TODO: reading the file could be optimized for larger files
+    // TODO: reading the file could be optimized for larger files
     let bytes_str = fs::read_to_string(PathBuf::from_str(path).unwrap())?;
 
     let file_name = PathBuf::from_str(path).expect("failed to create a pathbuf");
@@ -64,15 +64,8 @@ fn run_file(path: &str) -> Result<()> {
 fn link_exe(object_file: &str, output_name: &str) -> Result<()> {
     #[cfg(target_os = "windows")]
     {
-        // On Windows, you still need Windows-specific linking
         let mut cmd = Command::new("clang");
-        cmd.args([
-            object_file,
-            "-o",
-            output_name,
-            "-fuse-ld=lld", // Use LLVM's linker
-                            // Still needs Windows CRT and subsystem
-        ]);
+        cmd.args([object_file, "-o", output_name, "-fuse-ld=lld"]);
         cmd.status()?;
     }
     #[cfg(target_os = "linux")]
@@ -82,7 +75,6 @@ fn link_exe(object_file: &str, output_name: &str) -> Result<()> {
         cmd.status()?;
     }
 
-    // Clean up object file
     if let Err(e) = fs::remove_file(object_file) {
         eprintln!("Warning: Could not remove object file: {}", e);
     }
@@ -105,10 +97,10 @@ fn run(source_code: &str, file_name: &str) -> Result<()> {
         }
     }
 
-    println!("***TOKENS***");
-    for token in tokens.iter() {
-        println!("Token: {token:?}");
-    }
+    // println!("***TOKENS***");
+    // for token in tokens.iter() {
+    //     println!("Token: {token:?}");
+    // }
 
     let mut parser = Parser::new(tokens, source_code);
     match parser.parse() {

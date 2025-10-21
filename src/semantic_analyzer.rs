@@ -50,16 +50,19 @@ impl SemanticAnalyzer {
 
         self.declared_globals = seen_globals;
 
-        // in standard C, functions can use globals declared anywhere in the file
-        // we allow functions to use any global
-        let declared_globals = self.declared_globals.clone();
         let declared_functions = self.declared_functions.clone();
 
         for function in &program.function_def {
             if !function.forward_dec {
-                let mut local_scope = LocalScope::new(declared_globals.clone());
+                let visible_globals: HashSet<String> = program
+                    .global_vars
+                    .iter()
+                    .filter(|g| g.declaration_idx < function.declaration_idx)
+                    .map(|g| g.name.name.clone())
+                    .collect();
+                let mut local_scope = LocalScope::new(visible_globals);
 
-                // Add function parameters to local scope
+                // Adding function parameters to local scope
                 for param in &function.parameters {
                     if let Some(name) = &param.name {
                         local_scope.declare_local(name.name.clone());
@@ -189,7 +192,7 @@ impl SemanticAnalyzer {
                 condition,
                 body,
             } => {
-                // For loops create their own scope if they have a declaration
+                // for loops create their own scope if they have a declaration
                 let has_declaration = counter_declaration
                     .as_ref()
                     .map(|s| matches!(**s, Statement::VarDeclaration { .. }))

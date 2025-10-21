@@ -22,7 +22,7 @@ use crate::{
     expect_token,
     lexer::{Token, TokenType},
 };
-use std::{cell::RefCell, collections::HashMap};
+use std::cell::RefCell;
 
 type ParseResult<T> = Result<T, CompilerError>;
 
@@ -45,6 +45,7 @@ pub struct GlobalVariable {
     pub _type: Types,
     pub name: Identifier,
     pub initializer: Option<Expression>,
+    pub declaration_idx: usize,
 }
 
 /// functions consist of a name (identifier) and a
@@ -57,6 +58,7 @@ pub struct Function {
     pub parameters: Vec<Parameter>,
     pub return_type: Types,
     pub forward_dec: bool,
+    pub declaration_idx: usize,
 }
 
 /// represents variable names, function names,etc
@@ -201,12 +203,15 @@ impl Parser {
     pub fn parse(&mut self) -> Result<Program, Vec<CompilerError>> {
         let mut functions = Vec::with_capacity(5);
         let mut globals: Vec<GlobalVariable> = Vec::with_capacity(5);
-
+        let mut declaration_count = 0;
         // TODO: includes could be handled before this operation
 
         while !self.is_at_end() {
             match self.parse_top_decs() {
-                Ok(TopLvlDecs::Function(func)) => {
+                Ok(TopLvlDecs::Function(mut func)) => {
+                    func.declaration_idx = declaration_count;
+                    declaration_count += 1;
+
                     if globals.iter().any(|f| f.name.name == func.name.name) {
                         let error = self.error(
                             ErrorType::RedefinedVariable,
@@ -218,7 +223,10 @@ impl Parser {
                         functions.push(func);
                     }
                 }
-                Ok(TopLvlDecs::GlobalVar(glob)) => {
+                Ok(TopLvlDecs::GlobalVar(mut glob)) => {
+                    glob.declaration_idx = declaration_count;
+                    declaration_count += 1;
+
                     if functions.iter().any(|f| f.name.name == glob.name.name)
                         || globals
                             .iter()
@@ -286,6 +294,7 @@ impl Parser {
                 parameters,
                 return_type: var_type,
                 forward_dec,
+                declaration_idx: 0,
             }))
         } else {
             let initializer = if self.check_token_type(&TokenType::Equal) {
@@ -302,6 +311,7 @@ impl Parser {
                 _type: var_type,
                 name,
                 initializer,
+                declaration_idx: 0,
             }))
         }
     }
