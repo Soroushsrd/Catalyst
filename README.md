@@ -98,7 +98,12 @@ The compiler follows a traditional three-phase design:
 - Handles unary expressions and function definitions
 - Error reporting for syntax errors
 
-### 3. Code Generation (`code_generator.rs`)
+### 3. Code Generation (`semantic_analyzer.rs`)
+
+- **SemanticAnalyzer** analyzes the parsed AST semanticly
+- Checks for usage before declaration errors
+
+### 4. Code Generation (`code_generator.rs`)
 
 - **LLVMCodeGenerator** translates AST to llvm generated assembly
 - Follows System V ABI calling conventions
