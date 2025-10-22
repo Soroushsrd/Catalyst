@@ -605,6 +605,48 @@ impl<'ctx> LLVMCodeGenerator<'ctx> {
                 false_expr,
             } => self.generate_ternary_op(condition, true_expr, false_expr),
             Expression::Unknown => Ok(self.context.i32_type().const_int(0, false).into()),
+            Expression::AddressOf(inner) => self.generate_address_of(inner),
+            Expression::Dereference(inner) => self.generate_dereference(inner),
+        }
+    }
+
+    fn generate_dereference(
+        &mut self,
+        expr: &Box<Expression>,
+    ) -> Result<BasicValueEnum<'ctx>, String> {
+        let ptr_value = self.generate_expressions(&expr)?;
+        let ptr = ptr_value.into_pointer_value();
+
+        // im setting the ptr type to i32 for now ! TODO:
+        let loaded = self
+            .builder
+            .build_load(self.context.i32_type(), ptr, "deref")
+            .map_err(|e| format!("failed to dereference the pointer: {e}"))?;
+
+        Ok(loaded)
+    }
+
+    fn generate_address_of(
+        &mut self,
+        expr: &Box<Expression>,
+    ) -> Result<BasicValueEnum<'ctx>, String> {
+        match **expr {
+            Expression::Identifier(ref name) => {
+                // pointer to the variable (alloca or global)
+                if let Some(var_info) = self.lookup_variable(name) {
+                    // already a pointer
+                    return Ok(var_info.value);
+                }
+                if let Some(global_var) = self.global_vars.get(name) {
+                    return Ok(global_var.as_pointer_value().into());
+                }
+                Err(format!("Undefined variable: {}", name))
+            }
+            Expression::Dereference(ref inner) => {
+                // &(*ptr) = ptr, just evaluatin the pointer
+                self.generate_expressions(inner)
+            }
+            _ => Err("Cannot take address of non-lvalue".to_string()),
         }
     }
 
@@ -711,6 +753,7 @@ impl<'ctx> LLVMCodeGenerator<'ctx> {
                 Ok(result.into())
             }
             _ => {
+                // TODO: add ptr arithmetics in here!
                 let left_val = self.generate_expressions(left)?;
                 let right_val = self.generate_expressions(right)?;
 
@@ -974,6 +1017,7 @@ impl<'ctx> LLVMCodeGenerator<'ctx> {
         }
     }
 
+    // TODO: handle pointer assignment in here
     fn generate_assignment(
         &mut self,
         target: &str,

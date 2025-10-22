@@ -135,6 +135,8 @@ pub enum Expression {
     BitwiseNot(Box<Expression>),
     UnaryMinus(Box<Expression>),
     LogicalNot(Box<Expression>),
+    AddressOf(Box<Expression>),
+    Dereference(Box<Expression>),
     Binary {
         left: Box<Expression>,
         operator: BinaryOperator,
@@ -324,24 +326,31 @@ impl Parser {
             "Unexpected end of file",
             None
         );
-        let type_ = match token.token_type() {
-            TokenType::Int => Ok(Types::Int),
-            TokenType::Void => Ok(Types::Void),
-            TokenType::Char => Ok(Types::Char),
-            TokenType::Long => Ok(Types::Long),
-            TokenType::Float => Ok(Types::Float),
-            TokenType::Double => Ok(Types::Double),
-            TokenType::Pointer(ptr) => Ok(Types::Pointer(ptr.clone())),
-            _ => Err(self.error(
-                ErrorType::TypeError,
-                "Expected type",
-                Some("if your function doesn't return anything, use 'void' as return type"),
-            )),
+        let mut type_ = match token.token_type() {
+            TokenType::Int => Types::Int,
+            TokenType::Void => Types::Void,
+            TokenType::Char => Types::Char,
+            TokenType::Long => Types::Long,
+            TokenType::Float => Types::Float,
+            TokenType::Double => Types::Double,
+            TokenType::Pointer(ptr) => Types::Pointer(ptr.clone()),
+            _ => {
+                return Err(self.error(
+                    ErrorType::TypeError,
+                    "Expected type",
+                    Some("if your function doesn't return anything, use 'void' as return type"),
+                ));
+            }
         };
-
         self.advance();
-        type_
+
+        while self.check_token_type(&TokenType::Star) {
+            self.advance();
+            type_ = Types::Pointer(Box::new(type_));
+        }
+        Ok(type_)
     }
+
     /// parses identifiers. These identifiers could be variable names,
     /// method names, and so on!
     fn parse_identifiers(&self) -> ParseResult<Identifier> {
@@ -873,6 +882,16 @@ impl Parser {
                 self.advance();
                 let expr = self.parse_unary_expression()?;
                 Ok(Expression::BitwiseNot(Box::new(expr)))
+            }
+            TokenType::Ampersand => {
+                self.advance();
+                let expr = self.parse_unary_expression()?;
+                Ok(Expression::AddressOf(Box::new(expr)))
+            }
+            TokenType::Star => {
+                self.advance();
+                let expr = self.parse_unary_expression()?;
+                Ok(Expression::Dereference(Box::new(expr)))
             }
             _ => self.parse_primary_expression(),
         }

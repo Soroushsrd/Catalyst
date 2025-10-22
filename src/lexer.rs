@@ -99,12 +99,7 @@ impl Scanner {
                 let token_type = if self.match_char('&') {
                     TokenType::And
                 } else {
-                    self.add_error(
-                        ErrorType::UnexpectedToken,
-                        &format!("Unexpected character {c}"),
-                        None,
-                    );
-                    TokenType::Error(format!("Unexpected character: {c}"))
+                    TokenType::Ampersand
                 };
                 self.add_token(token_type);
             }
@@ -431,6 +426,7 @@ pub enum TokenType {
     Star,
     QMark,
     Colon,
+    Ampersand,
 
     // one or two character tokens
     Bang,
@@ -492,6 +488,7 @@ impl Display for TokenType {
             Self::Star => write!(f, "*"),
             Self::Colon => write!(f, ":"),
             Self::QMark => write!(f, "?"),
+            Self::Ampersand => write!(f, "&"),
             Self::Bang => write!(f, "!"),
             Self::BangEqual => write!(f, "!="),
             Self::Equal => write!(f, "="),

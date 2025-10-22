@@ -61,7 +61,12 @@ A simple compiler written in Rust that uses LLVM to compile C code.
 
 - [ ] **Arrays and indexing**
 - [x] **Nested Blocks**
-- [ ] **Pointers and references**
+- [x] **Pointer declaration(int *ptr)**
+- [x] **Address-of operator(&variable)**
+- [ ] **Dereference operator(*ptr)**
+- [ ] **Pointer arithmetic(ptr+1)**
+- [ ] **Pointer assignment(ptr = &x)**
+- [ ] **Address-of operator**
 - [ ] **Structures/records**
 - [ ] **String handling**
 - [ ] **Multiple source files**
