@@ -250,13 +250,22 @@ impl SemanticAnalyzer {
                 self.check_expression_in_function(e, local_scope, available_functions);
             }
             Expression::Assignment { target, value } => {
-                if !local_scope.is_declared(target) {
-                    self.errors.push(CompilerError::new(
-                        ErrorType::UndefinedVariable,
-                        1,
-                        1,
-                        &format!("Variable '{}' used before declaration", target),
-                    ));
+                match target.as_ref() {
+                    Expression::Identifier(name) => {
+                        if !local_scope.is_declared(name) {
+                            self.errors.push(CompilerError::new(
+                                ErrorType::UndefinedVariable,
+                                1,
+                                1,
+                                &format!("Variable '{}' used before declaration", name),
+                            ));
+                        }
+                    }
+                    Expression::Dereference(inner) => {
+                        // check the dereferenced expression
+                        self.check_expression_in_function(inner, local_scope, available_functions);
+                    }
+                    _ => {}
                 }
                 self.check_expression_in_function(value, local_scope, available_functions);
             }

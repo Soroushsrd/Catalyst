@@ -143,7 +143,7 @@ pub enum Expression {
         right: Box<Expression>,
     },
     Assignment {
-        target: String,
+        target: Box<Expression>,
         value: Box<Expression>,
     },
     // as in a ? 1 : 2;
@@ -777,17 +777,18 @@ impl Parser {
             self.advance();
             let value = self.parse_assignment()?;
 
-            if let Expression::Identifier(name) = expr {
-                Ok(Expression::Assignment {
-                    target: name,
-                    value: Box::new(value),
-                })
-            } else {
-                Err(self.error(
+            match expr {
+                Expression::Identifier(_) | Expression::Dereference(_) => {
+                    Ok(Expression::Assignment {
+                        target: Box::new(expr),
+                        value: Box::new(value),
+                    })
+                }
+                _ => Err(self.error(
                     ErrorType::InvalidAssignment,
                     "Invalid assignment target",
-                    Some("you need to use a '='"),
-                ))
+                    Some("Can only assign to variables or dereferenced pointers"),
+                )),
             }
         } else {
             Ok(expr)

@@ -1020,26 +1020,40 @@ impl<'ctx> LLVMCodeGenerator<'ctx> {
     // TODO: handle pointer assignment in here
     fn generate_assignment(
         &mut self,
-        target: &str,
+        target: &Box<Expression>,
         value: &Box<Expression>,
     ) -> Result<BasicValueEnum<'ctx>, String> {
         let val = self.generate_expressions(value)?;
 
-        if let Some(info) = self.lookup_variable(&target) {
-            let ptr = info.value.into_pointer_value();
-            self.builder
-                .build_store(ptr, val)
-                .map_err(|e| format!("Failed to store: {e:?}"))?;
-            return Ok(val);
+        match target.as_ref() {
+            Expression::Identifier(name) => {
+                if let Some(info) = self.lookup_variable(name) {
+                    let ptr = info.value.into_pointer_value();
+                    self.builder
+                        .build_store(ptr, val)
+                        .map_err(|e| format!("Failed to store: {e:?}"))?;
+                    return Ok(val);
+                }
+
+                if let Some(global_var) = self.global_vars.get(name) {
+                    let ptr = global_var.as_pointer_value();
+                    self.builder
+                        .build_store(ptr, val)
+                        .map_err(|e| format!("failed to store: {e:?}"))?;
+                    return Ok(val);
+                }
+                Err(format!("Undefined variable in assignment: {}", name))
+            }
+            Expression::Dereference(inner) => {
+                let ptr_value = self.generate_expressions(inner)?;
+                let ptr = ptr_value.into_pointer_value();
+                self.builder
+                    .build_store(ptr, val)
+                    .map_err(|e| format!("failed to store dereferenced pointer: {e}"))?;
+                Ok(val)
+            }
+            _ => Err("Invalid assignment target".to_string()),
         }
-        if let Some(global_var) = self.global_vars.get(target) {
-            let ptr = global_var.as_pointer_value();
-            self.builder
-                .build_store(ptr, val)
-                .map_err(|e| format!("failed to store: {e:?}"))?;
-            return Ok(val);
-        }
-        return Err(format!("Undefined variable in assignment: {}", target));
     }
 
     fn generate_bitwise_not(
