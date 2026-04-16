@@ -614,16 +614,41 @@ impl<'ctx> LLVMCodeGenerator<'ctx> {
         &mut self,
         expr: &Box<Expression>,
     ) -> Result<BasicValueEnum<'ctx>, String> {
+        let load_type = self.get_deref_load_type(expr)?;
         let ptr_value = self.generate_expressions(&expr)?;
         let ptr = ptr_value.into_pointer_value();
 
-        // im setting the ptr type to i32 for now ! TODO:
         let loaded = self
             .builder
-            .build_load(self.context.i32_type(), ptr, "deref")
+            .build_load(load_type, ptr, "deref")
             .map_err(|e| format!("failed to dereference the pointer: {e}"))?;
 
         Ok(loaded)
+    }
+    fn get_deref_load_type(&self, expr: &Expression) -> Result<BasicTypeEnum<'ctx>, String> {
+        match expr {
+            Expression::Identifier(name) => {
+                let var_type = self
+                    .scope_stack
+                    .iter()
+                    .rev()
+                    .find_map(|scope| scope.get(name))
+                    .map(|info| info.var_type.clone())
+                    .or_else(|| {
+                        self.global_vars
+                            .get(name)
+                            .and_then(|g| g.get_initializer())
+                            .map(|_| Types::Int)
+                    });
+                match var_type {
+                    Some(Types::Pointer(inner)) => self.llvm_type_from_ast(&inner),
+                    Some(other) => Err(format!("cannot dref non pointer types: {other:?}")),
+                    None => Err(format!("unknown variable: {name}")),
+                }
+            }
+            Expression::Dereference(_) => Ok(self.context.ptr_type(AddressSpace::default()).into()),
+            _ => Ok(self.context.i32_type().into()),
+        }
     }
 
     fn generate_address_of(
