@@ -329,7 +329,7 @@ impl Parser {
         let mut type_ = match token.token_type() {
             TokenType::Int => Types::Int,
             TokenType::Void => Types::Void,
-            TokenType::Char => Types::Char,
+            TokenType::Char(_) => Types::Char,
             TokenType::Long => Types::Long,
             TokenType::Float => Types::Float,
             TokenType::Double => Types::Double,
@@ -450,7 +450,7 @@ impl Parser {
         let param_type = match token.type_ {
             TokenType::Int => Types::Int,
             TokenType::Void => Types::Void,
-            TokenType::Char => Types::Char,
+            TokenType::Char(_) => Types::Char,
             TokenType::Long => Types::Long,
             TokenType::Float => Types::Float,
             TokenType::Double => Types::Double,
@@ -680,7 +680,7 @@ impl Parser {
                 | TokenType::Void
                 | TokenType::Float
                 | TokenType::Double
-                | TokenType::Char
+                | TokenType::Char(_)
         ) {
             return true;
         }
@@ -770,7 +770,6 @@ impl Parser {
 
     /// handles assignment expressions such as int a = 1;
     fn parse_assignment(&self) -> ParseResult<Expression> {
-        // let expr = self.parse_binary_expression(0)?;
         let expr = self.parse_ternary_operation()?;
 
         if self.check_token_type(&TokenType::Equal) {
@@ -1099,7 +1098,7 @@ impl Parser {
                     | TokenType::Return
                     | TokenType::Int
                     | TokenType::Void
-                    | TokenType::Char
+                    | TokenType::Char(_)
                     | TokenType::Long
                     | TokenType::Float
                     | TokenType::Double => return,
@@ -1123,22 +1122,6 @@ impl Parser {
                 .collect::<Vec<&Function>>();
 
             // TODO: find a way to add the correct line/column number for these errors
-            //
-            // if implementations.is_empty() {
-            //     self.errors.borrow_mut().push(
-            //         CompilerError::new(
-            //             ErrorType::SemanticError,
-            //             1,
-            //             1,
-            //             &format!(
-            //                 "forward declaration '{}' has no implementation",
-            //                 forward_dec.name.name
-            //             ),
-            //         )
-            //         .with_suggestion("you might want to implement it!"),
-            //     );
-            //     continue;
-            // }
 
             if implementations.len() > 1 {
                 self.errors.borrow_mut().push(
@@ -1211,8 +1194,9 @@ impl Parser {
                     }
                 }
             }
-            self.check_for_mult_imp(functions);
         }
+
+        self.check_for_mult_imp(functions);
     }
 
     fn check_for_mult_imp(&self, functions: &[Function]) {
