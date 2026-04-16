@@ -82,8 +82,6 @@ impl Scanner {
             ':' => self.add_token(TokenType::Colon),
             '?' => self.add_token(TokenType::QMark),
             '%' => self.add_token(TokenType::Mod),
-            //TODO: handle pointers using the variation below(star). this should be able to handle
-            // both a multipication and a pointer
             '*' => self.add_token(TokenType::Star),
             '!' => {
                 let token_type = if self.match_char('=') {
@@ -163,6 +161,7 @@ impl Scanner {
                 self.column = 1;
             }
             '"' => self.handle_string(),
+            '\'' => self.handle_chars(),
             '~' => self.add_token(TokenType::BitwiseNot),
             _ => {
                 if c.is_ascii_digit() {
@@ -178,6 +177,21 @@ impl Scanner {
                     self.add_token(TokenType::Error(format!("Unexpected character: {c}")));
                 }
             }
+        }
+    }
+
+    fn handle_chars(&mut self) {
+        if self.peek().is_ascii_alphabetic() {
+            println!("current char: {}", self.peek());
+            let current_char = self.advance();
+            self.add_token(TokenType::Char(current_char));
+            self.advance(); // for ending '
+        } else {
+            self.add_error(
+                ErrorType::SyntaxError,
+                "need a ascii alphabetic char between quotes",
+                Some("make sure you're using an actuall character"),
+            );
         }
     }
 
@@ -200,7 +214,7 @@ impl Scanner {
         match text {
             "void" => TokenType::Void,
             "int" => TokenType::Int,
-            "char" => TokenType::Char,
+            "char" => TokenType::Char('0'),
             "long" => TokenType::Long,
             "double" => TokenType::Double,
             "float" => TokenType::Float,
@@ -450,7 +464,7 @@ pub enum TokenType {
     Long,
     Double,
     Float,
-    Char,
+    Char(char),
     And,
     Break,
     Continue,
@@ -504,7 +518,7 @@ impl Display for TokenType {
             Self::BitwiseNot => write!(f, "~"),
             Self::Void => write!(f, "void"),
             Self::Int => write!(f, "int"),
-            Self::Char => write!(f, "char"),
+            Self::Char(c) => write!(f, "char: {c};"),
             Self::Long => write!(f, "long"),
             Self::Double => write!(f, "double"),
             Self::Float => write!(f, "float"),

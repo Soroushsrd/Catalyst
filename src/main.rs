@@ -97,10 +97,10 @@ fn run(source_code: &str, file_name: &str) -> Result<()> {
         }
     }
 
-    // println!("***TOKENS***");
-    // for token in tokens.iter() {
-    //     println!("Token: {token:?}");
-    // }
+    println!("***TOKENS***");
+    for token in tokens.iter() {
+        println!("Token: {token:?}");
+    }
 
     let mut parser = Parser::new(tokens, source_code);
     match parser.parse() {
