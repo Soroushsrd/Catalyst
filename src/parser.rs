@@ -229,17 +229,34 @@ impl Parser {
                     glob.declaration_idx = declaration_count;
                     declaration_count += 1;
 
-                    if functions.iter().any(|f| f.name.name == glob.name.name)
-                        || globals
-                            .iter()
-                            .any(|f: &GlobalVariable| f.name.name == glob.name.name)
-                    {
+                    if functions.iter().any(|f| f.name.name == glob.name.name) {
                         let error = self.error(
                             ErrorType::RedefinedVariable,
                             &format!("name {} has already been defined!", &glob.name.name),
                             Some("choose a different name"),
                         );
                         self.errors.borrow_mut().push(error);
+                    } else if let Some(existing_idx) =
+                        globals.iter().position(|g| g.name.name == glob.name.name)
+                    {
+                        let existing = &globals[existing_idx];
+                        // allowing a tentative declaration (no initializer) to be completed
+                        // by a later definition with an initializer, but not two full definitions
+                        if existing.initializer.is_none() && glob.initializer.is_some() {
+                            // replacing the tentative declaration with the full definition,
+                            // but keeping the original declaration_idx so visibility checks
+                            // based on declaration order still work correctly
+                            let original_idx = existing.declaration_idx;
+                            globals[existing_idx] = glob;
+                            globals[existing_idx].declaration_idx = original_idx;
+                        } else {
+                            let error = self.error(
+                                ErrorType::RedefinedVariable,
+                                &format!("name {} has already been defined!", &glob.name.name),
+                                Some("choose a different name"),
+                            );
+                            self.errors.borrow_mut().push(error);
+                        }
                     } else {
                         globals.push(glob);
                     }
