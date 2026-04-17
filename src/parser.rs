@@ -37,7 +37,6 @@ pub struct Program {
 pub enum TopLvlDecs {
     Function(Function),
     GlobalVar(GlobalVariable),
-    //TODO:
 }
 
 #[derive(Debug, Clone)]
@@ -45,6 +44,10 @@ pub struct GlobalVariable {
     pub _type: Types,
     pub name: Identifier,
     pub initializer: Option<Expression>,
+    /// TODO: it's used in the semantic analyzer to enforce use-before-declaration ordering for globals
+    /// The idea is: a function should only be able to see globals that were declared before it in the source file
+    /// However, this is not how C actually works. In C, all globals are visible to all functions regardless of declaration order
+    /// the linker resolves them the simplest fix is to just remove the filter entirely and make all globals visible to all functions
     pub declaration_idx: usize,
 }
 
@@ -58,6 +61,7 @@ pub struct Function {
     pub parameters: Vec<Parameter>,
     pub return_type: Types,
     pub forward_dec: bool,
+    // TODO: Same as the one in globalvariables
     pub declaration_idx: usize,
 }
 
@@ -122,7 +126,6 @@ pub enum Statement {
     },
     Break,
     Continue,
-    //TODO:
 }
 
 /// evaluates to a value and can be used as part of other expressions
@@ -132,6 +135,7 @@ pub enum Expression {
     Unknown,
     Identifier(String),
     Number(f32),
+    CharLiteral(char),
     BitwiseNot(Box<Expression>),
     UnaryMinus(Box<Expression>),
     LogicalNot(Box<Expression>),
@@ -161,7 +165,7 @@ pub enum Expression {
         // or
         // foo(a+b)
         arguments: Vec<Expression>,
-    }, //TODO:
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -346,7 +350,7 @@ impl Parser {
         let mut type_ = match token.token_type() {
             TokenType::Int => Types::Int,
             TokenType::Void => Types::Void,
-            TokenType::Char(_) => Types::Char,
+            TokenType::Char => Types::Char,
             TokenType::Long => Types::Long,
             TokenType::Float => Types::Float,
             TokenType::Double => Types::Double,
@@ -467,7 +471,7 @@ impl Parser {
         let param_type = match token.type_ {
             TokenType::Int => Types::Int,
             TokenType::Void => Types::Void,
-            TokenType::Char(_) => Types::Char,
+            TokenType::Char => Types::Char,
             TokenType::Long => Types::Long,
             TokenType::Float => Types::Float,
             TokenType::Double => Types::Double,
@@ -697,7 +701,7 @@ impl Parser {
                 | TokenType::Void
                 | TokenType::Float
                 | TokenType::Double
-                | TokenType::Char(_)
+                | TokenType::Char
         ) {
             return true;
         }
@@ -928,7 +932,9 @@ impl Parser {
             }
         };
         let expression = match token.token_type() {
+            // TODO: think of replacing f32 for numbers. probably needs expansion of Number type
             TokenType::Number(value) => Expression::Number(*value),
+            TokenType::CharLiteral(ch) => Expression::CharLiteral(*ch),
             TokenType::Identifier(name) => {
                 // in case we run into a function
 
@@ -1115,7 +1121,7 @@ impl Parser {
                     | TokenType::Return
                     | TokenType::Int
                     | TokenType::Void
-                    | TokenType::Char(_)
+                    | TokenType::Char
                     | TokenType::Long
                     | TokenType::Float
                     | TokenType::Double => return,

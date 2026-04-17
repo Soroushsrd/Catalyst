@@ -161,7 +161,7 @@ impl Scanner {
                 self.column = 1;
             }
             '"' => self.handle_string(),
-            '\'' => self.handle_chars(),
+            '\'' => self.handle_char_literals(),
             '~' => self.add_token(TokenType::BitwiseNot),
             _ => {
                 if c.is_ascii_digit() {
@@ -180,11 +180,11 @@ impl Scanner {
         }
     }
 
-    fn handle_chars(&mut self) {
-        if self.peek().is_ascii_alphabetic() {
+    fn handle_char_literals(&mut self) {
+        if self.peek().is_ascii_alphanumeric() {
             println!("current char: {}", self.peek());
             let current_char = self.advance();
-            self.add_token(TokenType::Char(current_char));
+            self.add_token(TokenType::CharLiteral(current_char));
             self.advance(); // for ending '
         } else {
             self.add_error(
@@ -214,7 +214,7 @@ impl Scanner {
         match text {
             "void" => TokenType::Void,
             "int" => TokenType::Int,
-            "char" => TokenType::Char('0'),
+            "char" => TokenType::Char,
             "long" => TokenType::Long,
             "double" => TokenType::Double,
             "float" => TokenType::Float,
@@ -464,7 +464,8 @@ pub enum TokenType {
     Long,
     Double,
     Float,
-    Char(char),
+    Char,
+    CharLiteral(char),
     And,
     Break,
     Continue,
@@ -518,7 +519,8 @@ impl Display for TokenType {
             Self::BitwiseNot => write!(f, "~"),
             Self::Void => write!(f, "void"),
             Self::Int => write!(f, "int"),
-            Self::Char(c) => write!(f, "char: {c};"),
+            Self::Char => write!(f, "char"),
+            Self::CharLiteral(c) => write!(f, "charliteral: {c};"),
             Self::Long => write!(f, "long"),
             Self::Double => write!(f, "double"),
             Self::Float => write!(f, "float"),

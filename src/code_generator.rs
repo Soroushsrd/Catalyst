@@ -3,8 +3,8 @@ use inkwell::builder::Builder;
 use inkwell::context::Context;
 use inkwell::module::Module;
 use inkwell::targets::{CodeModel, FileType, RelocMode, Target, TargetMachine};
-use inkwell::types::BasicType;
 use inkwell::types::BasicTypeEnum;
+use inkwell::types::{AnyTypeEnum, BasicType};
 use inkwell::values::{BasicValueEnum, FunctionValue, GlobalValue, IntValue};
 use inkwell::{AddressSpace, IntPredicate, OptimizationLevel};
 
@@ -233,8 +233,36 @@ impl<'ctx> LLVMCodeGenerator<'ctx> {
             Statement::Return(expr) => {
                 if let Some(expression) = expr {
                     let value = self.generate_expressions(expression)?;
+                    // coerce to the function's actual return type
+                    let fn_return_type =
+                        self.current_function.unwrap().get_type().get_return_type();
+
+                    let coerced = if let (
+                        BasicValueEnum::IntValue(iv),
+                        Some(BasicTypeEnum::IntType(ret_type)),
+                    ) = (value, fn_return_type)
+                    {
+                        let vw = iv.get_type().get_bit_width();
+                        let rw = ret_type.get_bit_width();
+                        if vw < rw {
+                            self.builder
+                                .build_int_z_extend(iv, ret_type, "ret_ext")
+                                .map_err(|e| format!("failed to extend return value: {e}"))?
+                                .into()
+                        } else if vw > rw {
+                            self.builder
+                                .build_int_truncate(iv, ret_type, "ret_trunc")
+                                .map_err(|e| format!("failed to truncate return value: {e}"))?
+                                .into()
+                        } else {
+                            value
+                        }
+                    } else {
+                        value
+                    };
+
                     self.builder
-                        .build_return(Some(&value))
+                        .build_return(Some(&coerced))
                         .map_err(|e| format!("failed to build return: {e}"))?;
                 } else {
                     self.builder
@@ -427,6 +455,7 @@ impl<'ctx> LLVMCodeGenerator<'ctx> {
         };
         if let Some(init_expr) = initializer {
             let init_value = self.generate_expressions(init_expr)?;
+            let init_value = self.coerce_for_store(init_value, var_type)?;
             self.builder
                 .build_store(alloca, init_value)
                 .map_err(|e| format!("failed to store initial value: {e}"))?;
@@ -587,6 +616,9 @@ impl<'ctx> LLVMCodeGenerator<'ctx> {
                 .const_int(*value as u64, false)
                 .into()),
             Expression::Identifier(ident) => self.generate_identifier(ident),
+            Expression::CharLiteral(ch) => {
+                Ok(self.context.i8_type().const_int(*ch as u64, false).into())
+            }
             Expression::Binary {
                 left,
                 operator,
@@ -625,6 +657,9 @@ impl<'ctx> LLVMCodeGenerator<'ctx> {
 
         Ok(loaded)
     }
+    /// Determines what LLVM type to load when dereferencing an expression.
+    /// For `*p`  where p is `int*`  -> load i32
+    /// For `*pp` where pp is `int**` -> load ptr
     fn get_deref_load_type(&self, expr: &Expression) -> Result<BasicTypeEnum<'ctx>, String> {
         match expr {
             Expression::Identifier(name) => {
@@ -781,58 +816,39 @@ impl<'ctx> LLVMCodeGenerator<'ctx> {
                 // TODO: add ptr arithmetics in here!
                 let left_val = self.generate_expressions(left)?;
                 let right_val = self.generate_expressions(right)?;
+                let (lv, rv) =
+                    self.coerce_to_int(left_val.into_int_value(), right_val.into_int_value());
 
                 match operator {
                     BinaryOperator::Add => Ok(self
                         .builder
-                        .build_int_add(left_val.into_int_value(), right_val.into_int_value(), "add")
+                        .build_int_add(lv, rv, "add")
                         .map_err(|e| format!("failed to build add: {e}"))?
                         .into()),
                     BinaryOperator::Subtract => Ok(self
                         .builder
-                        .build_int_sub(
-                            left_val.into_int_value(),
-                            right_val.into_int_value(),
-                            "subtract",
-                        )
+                        .build_int_sub(lv, rv, "subtract")
                         .map_err(|e| format!("failed to build subtract: {e}"))?
                         .into()),
                     BinaryOperator::Multiply => Ok(self
                         .builder
-                        .build_int_mul(
-                            left_val.into_int_value(),
-                            right_val.into_int_value(),
-                            "multiply",
-                        )
+                        .build_int_mul(lv, rv, "multiply")
                         .map_err(|e| format!("failed to build multiplication: {e}"))?
                         .into()),
                     BinaryOperator::Divide => Ok(self
                         .builder
-                        .build_int_signed_div(
-                            left_val.into_int_value(),
-                            right_val.into_int_value(),
-                            "divide",
-                        )
+                        .build_int_signed_div(lv, rv, "divide")
                         .map_err(|e| format!("failed to build division: {e}"))?
                         .into()),
                     BinaryOperator::Mod => Ok(self
                         .builder
-                        .build_int_signed_rem(
-                            left_val.into_int_value(),
-                            right_val.into_int_value(),
-                            "remainder",
-                        )
+                        .build_int_signed_rem(lv, rv, "remainder")
                         .map_err(|e| format!("failed to build remainder: {e}"))?
                         .into()),
                     BinaryOperator::Equals => {
                         let ret = self
                             .builder
-                            .build_int_compare(
-                                IntPredicate::EQ,
-                                left_val.into_int_value(),
-                                right_val.into_int_value(),
-                                "eq",
-                            )
+                            .build_int_compare(IntPredicate::EQ, lv, rv, "eq")
                             .map_err(|e| format!("Failed to build equals: {:?}", e))?;
                         let result = self
                             .builder
@@ -843,12 +859,7 @@ impl<'ctx> LLVMCodeGenerator<'ctx> {
                     BinaryOperator::NotEquals => {
                         let ret = self
                             .builder
-                            .build_int_compare(
-                                IntPredicate::NE,
-                                left_val.into_int_value(),
-                                right_val.into_int_value(),
-                                "ne",
-                            )
+                            .build_int_compare(IntPredicate::NE, lv, rv, "ne")
                             .map_err(|e| format!("Failed to build ne: {:?}", e))?;
                         let result = self
                             .builder
@@ -859,12 +870,7 @@ impl<'ctx> LLVMCodeGenerator<'ctx> {
                     BinaryOperator::Less => {
                         let ret = self
                             .builder
-                            .build_int_compare(
-                                IntPredicate::SLT,
-                                left_val.into_int_value(),
-                                right_val.into_int_value(),
-                                "lt",
-                            )
+                            .build_int_compare(IntPredicate::SLT, lv, rv, "lt")
                             .map_err(|e| format!("Failed to build Lt: {:?}", e))?;
                         let result = self
                             .builder
@@ -875,12 +881,7 @@ impl<'ctx> LLVMCodeGenerator<'ctx> {
                     BinaryOperator::LessEqual => {
                         let ret = self
                             .builder
-                            .build_int_compare(
-                                IntPredicate::SLE,
-                                left_val.into_int_value(),
-                                right_val.into_int_value(),
-                                "le",
-                            )
+                            .build_int_compare(IntPredicate::SLE, lv, rv, "le")
                             .map_err(|e| format!("Failed to build LE: {:?}", e))?;
                         let result = self
                             .builder
@@ -891,12 +892,7 @@ impl<'ctx> LLVMCodeGenerator<'ctx> {
                     BinaryOperator::Greater => {
                         let ret = self
                             .builder
-                            .build_int_compare(
-                                IntPredicate::SGT,
-                                left_val.into_int_value(),
-                                right_val.into_int_value(),
-                                "gt",
-                            )
+                            .build_int_compare(IntPredicate::SGT, lv, rv, "gt")
                             .map_err(|e| format!("Failed to build gt: {:?}", e))?;
                         let result = self
                             .builder
@@ -907,12 +903,7 @@ impl<'ctx> LLVMCodeGenerator<'ctx> {
                     BinaryOperator::GreaterEqual => {
                         let ret = self
                             .builder
-                            .build_int_compare(
-                                IntPredicate::SGE,
-                                left_val.into_int_value(),
-                                right_val.into_int_value(),
-                                "ge",
-                            )
+                            .build_int_compare(IntPredicate::SGE, lv, rv, "ge")
                             .map_err(|e| format!("Failed to build ge: {:?}", e))?;
                         let result = self
                             .builder
@@ -1246,5 +1237,66 @@ impl<'ctx> LLVMCodeGenerator<'ctx> {
     }
     pub fn print_ir(&self) {
         self.module.print_to_stderr();
+    }
+    /// helper func to truncate before storing
+    fn coerce_for_store(
+        &self,
+        value: BasicValueEnum<'ctx>,
+        target_type: &Types,
+    ) -> Result<BasicValueEnum<'ctx>, String> {
+        let Ok(llvm_target) = self.llvm_type_from_ast(target_type) else {
+            return Ok(value);
+        };
+        match (value, llvm_target) {
+            (BasicValueEnum::IntValue(iv), BasicTypeEnum::IntType(it)) => {
+                let vw = iv.get_type().get_bit_width();
+                let tw = it.get_bit_width();
+                if vw == tw {
+                    return Ok(value);
+                }
+                if vw > tw {
+                    return Ok(self
+                        .builder
+                        .build_int_truncate(iv, it, "truct")
+                        .map_err(|e| e.to_string())?
+                        .into());
+                }
+                Ok(self
+                    .builder
+                    .build_int_z_extend(iv, it, "zextend")
+                    .map_err(|e| e.to_string())?
+                    .into())
+            }
+            _ => Ok(value),
+        }
+    }
+    /// promotes to i32 or what ever type lhs and rhs have
+    fn coerce_to_int(
+        &self,
+        lhs: IntValue<'ctx>,
+        rhs: IntValue<'ctx>,
+    ) -> (IntValue<'ctx>, IntValue<'ctx>) {
+        let lw = lhs.get_type().get_bit_width();
+        let rw = rhs.get_type().get_bit_width();
+        if lw == rw {
+            return (lhs, rhs);
+        }
+        let target = self.context.i32_type();
+        let l = if lw < 32 {
+            self.builder
+                .build_int_z_extend(lhs, target, "zext_l")
+                .unwrap()
+        } else {
+            lhs
+        };
+
+        let r = if rw < 32 {
+            self.builder
+                .build_int_z_extend(rhs, target, "zext_l")
+                .unwrap()
+        } else {
+            rhs
+        };
+        (l, r)
     }
 }
