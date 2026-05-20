@@ -3,8 +3,8 @@ use inkwell::builder::Builder;
 use inkwell::context::Context;
 use inkwell::module::Module;
 use inkwell::targets::{CodeModel, FileType, RelocMode, Target, TargetMachine};
+use inkwell::types::BasicType;
 use inkwell::types::BasicTypeEnum;
-use inkwell::types::{AnyTypeEnum, BasicType};
 use inkwell::values::{BasicValueEnum, FunctionValue, GlobalValue, IntValue};
 use inkwell::{AddressSpace, IntPredicate, OptimizationLevel};
 
