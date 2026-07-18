@@ -1,3 +1,2 @@
-int main() {
-    return -5;
-}
+// expected 251
+int main() { return -5; }
