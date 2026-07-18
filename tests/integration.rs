@@ -1,6 +1,3 @@
-// TODO: need something to get the files inside tests/stage_n/valid/*.c files and read their contents
-// TODO: when reading the contents, an expected outcome should be parsed which would be used to compare against the program output
-
 use std::{error::Error, path::Path, process::Command};
 
 fn expected_from_source(c_file: &Path) -> i32 {
@@ -73,5 +70,27 @@ mod tests {
     #[should_panic]
     fn test_stage_one_invalid() {
         run_files_in_dir("tests/stage_1/invalid").unwrap();
+    }
+
+    #[test]
+    fn test_stage_two_valid() {
+        run_files_in_dir("tests/stage_2/valid").unwrap();
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_stage_two_invalid() {
+        run_files_in_dir("tests/stage_2/invalid").unwrap();
+    }
+
+    #[test]
+    fn test_stage_three_valid() {
+        run_files_in_dir("tests/stage_3/valid").unwrap();
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_stage_three_invalid() {
+        run_files_in_dir("tests/stage_3/invalid").unwrap();
     }
 }
