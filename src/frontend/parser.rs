@@ -44,11 +44,6 @@ pub struct GlobalVariable {
     pub _type: Types,
     pub name: Identifier,
     pub initializer: Option<Expression>,
-    /// TODO: it's used in the semantic analyzer to enforce use-before-declaration ordering for globals
-    /// The idea is: a function should only be able to see globals that were declared before it in the source file
-    /// However, this is not how C actually works. In C, all globals are visible to all functions regardless of declaration order
-    /// the linker resolves them the simplest fix is to just remove the filter entirely and make all globals visible to all functions
-    pub declaration_idx: usize,
 }
 
 /// functions consist of a name (identifier) and a
@@ -61,8 +56,6 @@ pub struct Function {
     pub parameters: Vec<Parameter>,
     pub return_type: Types,
     pub forward_dec: bool,
-    // TODO: Same as the one in globalvariables
-    pub declaration_idx: usize,
 }
 
 /// represents variable names, function names,etc
@@ -209,15 +202,11 @@ impl Parser {
     pub fn parse(&mut self) -> Result<Program, Vec<CompilerError>> {
         let mut functions = Vec::with_capacity(5);
         let mut globals: Vec<GlobalVariable> = Vec::with_capacity(5);
-        let mut declaration_count = 0;
         // TODO: includes could be handled before this operation
 
         while !self.is_at_end() {
             match self.parse_top_decs() {
-                Ok(TopLvlDecs::Function(mut func)) => {
-                    func.declaration_idx = declaration_count;
-                    declaration_count += 1;
-
+                Ok(TopLvlDecs::Function(func)) => {
                     if globals.iter().any(|f| f.name.name == func.name.name) {
                         let error = self.error(
                             ErrorType::RedefinedVariable,
@@ -229,10 +218,7 @@ impl Parser {
                         functions.push(func);
                     }
                 }
-                Ok(TopLvlDecs::GlobalVar(mut glob)) => {
-                    glob.declaration_idx = declaration_count;
-                    declaration_count += 1;
-
+                Ok(TopLvlDecs::GlobalVar(glob)) => {
                     if functions.iter().any(|f| f.name.name == glob.name.name) {
                         let error = self.error(
                             ErrorType::RedefinedVariable,
@@ -248,11 +234,7 @@ impl Parser {
                         // by a later definition with an initializer, but not two full definitions
                         if existing.initializer.is_none() && glob.initializer.is_some() {
                             // replacing the tentative declaration with the full definition,
-                            // but keeping the original declaration_idx so visibility checks
-                            // based on declaration order still work correctly
-                            let original_idx = existing.declaration_idx;
                             globals[existing_idx] = glob;
-                            globals[existing_idx].declaration_idx = original_idx;
                         } else {
                             let error = self.error(
                                 ErrorType::RedefinedVariable,
@@ -317,7 +299,6 @@ impl Parser {
                 parameters,
                 return_type: var_type,
                 forward_dec,
-                declaration_idx: 0,
             }))
         } else {
             let initializer = if self.check_token_type(&TokenType::Equal) {
@@ -334,7 +315,6 @@ impl Parser {
                 _type: var_type,
                 name,
                 initializer,
-                declaration_idx: 0,
             }))
         }
     }
