@@ -20,7 +20,7 @@
 use crate::{
     errors::{CompilerError, ErrorType},
     expect_token,
-    lexer::{Token, TokenType},
+    frontend::lexer::{Token, TokenType},
 };
 use std::cell::RefCell;
 
@@ -86,7 +86,7 @@ pub enum Types {
     Char,
     Float,
     Double,
-    Pointer(Box<Types>), //TODO:
+    Pointer(Box<Types>), //TODO: Numeric types should be seperated
 }
 
 /// performs an action but doesnt return a value

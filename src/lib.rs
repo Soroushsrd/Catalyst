@@ -1,17 +1,16 @@
+pub mod backend;
 pub mod cmd_args;
-pub mod code_generator;
 pub mod errors;
-pub mod lexer;
-pub mod macros;
-pub mod parser;
-pub mod semantic_analyzer;
+pub mod frontend;
+pub mod middleend;
 
 use inkwell::context::Context;
+use middleend::semantic_analyzer::SemanticAnalyzer;
 
 use crate::{
-    code_generator::LLVMCodeGenerator,
-    lexer::{Scanner, Token},
-    parser::Parser,
+    backend::code_generator::LLVMCodeGenerator,
+    frontend::lexer::{Scanner, Token},
+    frontend::parser::Parser,
 };
 
 use std::{
@@ -111,7 +110,9 @@ pub fn run(source_code: &str, file_name: &str) -> Result<()> {
             // println!("\n***AST***");
             // println!("{ast:#?}");
 
-            let mut analyzer = semantic_analyzer::SemanticAnalyzer::new();
+            // TODO: scope resolution and type checking/stamping should be done at this level.
+            // we should then have the analyzer pass down a bindingtable instead of returning nothing
+            let mut analyzer = SemanticAnalyzer::new();
             if let Err(semantic_errors) = analyzer.analyze(&ast) {
                 for error in semantic_errors {
                     eprintln!("{}", error.format_error());
@@ -122,6 +123,7 @@ pub fn run(source_code: &str, file_name: &str) -> Result<()> {
             let context = Context::create();
             let mut codegen = LLVMCodeGenerator::new(&context, file_name);
 
+            // TODO: codegen shouldnt handle type checking, scope handling and related matters
             if let Err(e) = codegen.generate_program(&ast) {
                 eprintln!("Code generation failed: {e}");
                 return Err(ErrorKind::Other.into());

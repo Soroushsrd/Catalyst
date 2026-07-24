@@ -8,7 +8,7 @@ use inkwell::types::BasicTypeEnum;
 use inkwell::values::{BasicValueEnum, FunctionValue, GlobalValue, IntValue};
 use inkwell::{AddressSpace, IntPredicate, OptimizationLevel};
 
-use crate::parser::*;
+use crate::frontend::parser::*;
 use std::collections::HashMap;
 use std::path::Path;
 

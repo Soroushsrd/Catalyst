@@ -1,6 +1,6 @@
 use crate::{
     errors::{CompilerError, ErrorType},
-    parser::*,
+    frontend::parser::*,
 };
 use std::collections::HashMap;
 
@@ -88,7 +88,6 @@ impl SemanticAnalyzer {
     }
     fn type_of(&mut self, expr: &Expression, scope: &LocalScope) -> Result<Types, CompilerError> {
         match expr {
-            // TODO: need to think about Number variant at the lexer level
             Expression::Number(_) => Ok(Types::Int),
             Expression::CharLiteral(_) => Ok(Types::Char),
             Expression::Identifier(ident) => scope

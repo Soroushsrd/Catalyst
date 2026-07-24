@@ -1,6 +1,6 @@
 use crate::{
     errors::{CompilerError, ErrorType},
-    parser::Types,
+    frontend::parser::Types,
 };
 use std::fmt::Display;
 
@@ -28,6 +28,8 @@ pub struct Scanner {
     errors: Vec<CompilerError>,
 }
 
+// TODO: have a globally initialized vec for tokens instead of passing self at every function.
+// should help with performance
 impl Scanner {
     /// Creates a new scanner using the source code (str)
     pub fn new(source: &str) -> Self {
