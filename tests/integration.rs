@@ -93,4 +93,9 @@ mod tests {
     fn test_stage_three_invalid() {
         run_files_in_dir("tests/stage_3/invalid").unwrap();
     }
+
+    #[test]
+    fn test_stage_four_valid() {
+        run_files_in_dir("tests/stage_4/valid").unwrap();
+    }
 }

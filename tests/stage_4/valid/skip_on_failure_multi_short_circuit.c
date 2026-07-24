@@ -1,5 +1,6 @@
+// expected 3
 int main() {
-    int a = 0;
-    a || (a = 3) || (a = 4);
-    return a;
+  int a = 0;
+  a || (a = 3) || (a = 4);
+  return a;
 }
