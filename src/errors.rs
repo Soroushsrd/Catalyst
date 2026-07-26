@@ -1,7 +1,7 @@
 #[derive(Debug, Clone, Copy)]
 pub struct Span {
-    line: usize,
-    column: usize,
+    pub line: usize,
+    pub column: usize,
 }
 
 impl Span {

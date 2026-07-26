@@ -132,6 +132,7 @@ impl SemanticAnalyzer {
         expr: &mut TypedExpr,
         scope: &LocalScope,
     ) -> Result<Types, CompilerError> {
+        let span = expr.span;
         let t = match &mut expr.kind {
             // TODO: a function to analyuze the type of the number here
             Expression::Number(_) => Types::Int,
@@ -141,8 +142,8 @@ impl SemanticAnalyzer {
                 .ok_or(
                     CompilerError::new(
                         ErrorType::TypeError,
-                        1,
-                        1,
+                        span.line,
+                        span.column,
                         &format!("failed to find {ident} in local scope"),
                     )
                     .with_suggestion("Are you sure you defined the variable?"),
@@ -162,10 +163,30 @@ impl SemanticAnalyzer {
                     | BinaryOperator::GreaterEqual
                     | BinaryOperator::Less
                     | BinaryOperator::LessEqual => {
-                        self.check_comparable(&left_type, &right_type)?;
-                        Types::Int
+                        match self.check_comparable(&left_type, &right_type) {
+                            Some(t) => t,
+                            None => {
+                                return Err(CompilerError::new(
+                                    ErrorType::TypeError,
+                                    span.line,
+                                    span.column,
+                                    &format!("cannot compare {left_type:?} with {right_type:?}"),
+                                ));
+                            }
+                        }
+                        // Types::Int
                     }
-                    _ => self.unify_arithmetic(&left_type, &right_type)?,
+                    _ => match self.unify_arithmetic(&left_type, &right_type) {
+                        Some(t) => t,
+                        None => {
+                            return Err(CompilerError::new(
+                                ErrorType::TypeError,
+                                span.line,
+                                span.column,
+                                "left and right of the arithmetic dont have the same type",
+                            ));
+                        }
+                    },
                 }
             }
             Expression::AddressOf(expr) => {
@@ -177,8 +198,8 @@ impl SemanticAnalyzer {
                 _ => {
                     return Err(CompilerError::new(
                         ErrorType::TypeError,
-                        1,
-                        1,
+                        span.line,
+                        span.column,
                         "Only pointers can be dereferenced",
                     ));
                 }
@@ -186,7 +207,17 @@ impl SemanticAnalyzer {
             Expression::Assignment { target, value } => {
                 let t_type = self.type_of(target, scope)?;
                 let v_type = self.type_of(value, scope)?;
-                self.check_assignable(&t_type, &v_type)?
+                match self.check_assignable(&t_type, &v_type) {
+                    Some(t) => t,
+                    None => {
+                        return Err(CompilerError::new(
+                            ErrorType::TypeError,
+                            span.line,
+                            span.column,
+                            &format!("cannot assign {v_type:?} to {t_type:?}"),
+                        ));
+                    }
+                }
             }
             Expression::FunctionCall { name, arguments } => {
                 let (param_types, return_type) = match self.declared_functions.get(name) {
@@ -200,8 +231,8 @@ impl SemanticAnalyzer {
                     None => {
                         return Err(CompilerError::new(
                             ErrorType::TypeError,
-                            1,
-                            1,
+                            span.line,
+                            span.column,
                             &format!("call to undeclared function '{name}'"),
                         ));
                     }
@@ -210,8 +241,8 @@ impl SemanticAnalyzer {
                 if arguments.len() != param_types.len() {
                     return Err(CompilerError::new(
                         ErrorType::TypeError,
-                        1,
-                        1,
+                        span.line,
+                        span.column,
                         &format!(
                             "function '{name}' expects {} argument(s), got {}",
                             param_types.len(),
@@ -223,16 +254,19 @@ impl SemanticAnalyzer {
                 for (i, (arg, expected)) in arguments.iter_mut().zip(param_types.iter()).enumerate()
                 {
                     let actual = self.type_of(arg, scope)?;
-                    if let Err(e) = self.check_assignable(expected, &actual) {
-                        return Err(CompilerError::new(
-                            ErrorType::TypeError,
-                            1,
-                            1,
-                            &format!(
-                                "argument {} of '{name}': expected {expected:?}, got {actual:?}. inner err: {e:?}",
-                                i + 1
-                            ),
-                        ));
+                    match self.check_assignable(expected, &actual) {
+                        Some(_) => {}
+                        None => {
+                            return Err(CompilerError::new(
+                                ErrorType::TypeError,
+                                span.line,
+                                span.column,
+                                &format!(
+                                    "argument {} of '{name}': expected {expected:?}, got {actual:?}",
+                                    i + 1
+                                ),
+                            ));
+                        }
                     }
                 }
                 return_type
@@ -248,8 +282,8 @@ impl SemanticAnalyzer {
                 if true_t != false_t {
                     return Err(CompilerError::new(
                         ErrorType::TypeError,
-                        1,
-                        1,
+                        span.line,
+                        span.column,
                         "ternary operation represents different types as outcome",
                     ));
                 }
@@ -261,8 +295,8 @@ impl SemanticAnalyzer {
             Expression::Unknown => {
                 return Err(CompilerError::new(
                     ErrorType::TypeError,
-                    1,
-                    1,
+                    span.line,
+                    span.column,
                     "Unknown type",
                 ));
             }
@@ -273,48 +307,21 @@ impl SemanticAnalyzer {
 
     /// Arithmetic binary ops (+ - * / %): result is the unified operand type.
     /// `a + b` where a:Int, b:Long  ->  Long
-    fn unify_arithmetic(&self, left: &Types, right: &Types) -> Result<Types, CompilerError> {
-        unify(left, right).ok_or_else(|| {
-            CompilerError::new(
-                ErrorType::TypeError,
-                1,
-                1,
-                &format!("cannot apply arithmetic operator to {left:?} and {right:?}"),
-            )
-            .with_suggestion("operands of an arithmetic operator must be compatible numeric types")
-        })
+    fn unify_arithmetic(&self, left: &Types, right: &Types) -> Option<Types> {
+        unify(left, right) // ok_or_else(|| {
     }
 
     // TODO: simplify!
-    fn check_assignable(
-        &self,
-        target_type: &Types,
-        value_type: &Types,
-    ) -> Result<Types, CompilerError> {
-        unify(target_type, value_type).ok_or_else(|| {
-            CompilerError::new(
-                ErrorType::TypeError,
-                1,
-                1,
-                &format!("cannot assign {target_type:?} to {value_type:?}"),
-            )
-            .with_suggestion("Assignment must have compatible types")
-        })
+    fn check_assignable(&self, target_type: &Types, value_type: &Types) -> Option<Types> {
+        unify(target_type, value_type)
     }
 
+    // TODO: fix this. shouldnt return int for everything
     /// Comparison ops (== != < <= > >=): operands must unify, but the
     /// RESULT is always Int, regardless of operand type.
     /// `a < b` where a:Float, b:Int  ->  Int  (not Float)
-    fn check_comparable(&self, left: &Types, right: &Types) -> Result<Types, CompilerError> {
-        unify(left, right).map(|_| Types::Int).ok_or_else(|| {
-            CompilerError::new(
-                ErrorType::TypeError,
-                1,
-                1,
-                &format!("cannot compare {left:?} with {right:?}"),
-            )
-            .with_suggestion("comparison operands must be compatible types")
-        })
+    fn check_comparable(&self, left: &Types, right: &Types) -> Option<Types> {
+        unify(left, right).map(|_| Types::Int)
     }
 
     fn check_expr(&mut self, expr: &mut TypedExpr, scope: &LocalScope) {
@@ -339,11 +346,12 @@ impl SemanticAnalyzer {
             }
             Statement::Return(expr) => match expr {
                 Some(ex) => match self.type_of(ex, local_scope) {
-                    Ok(actual) => {
-                        if let Err(e) = self.check_assignable(return_type, &actual) {
-                            self.errors.push(e);
+                    Ok(actual) => match self.check_assignable(return_type, &actual) {
+                        Some(_) => {}
+                        None => {
+                            self.errors.push(CompilerError::new(ErrorType::TypeError,ex.span.line,ex.span.column,&format!("return type {return_type:?} and expected type {actual:?} dont match")));
                         }
-                    }
+                    },
                     Err(e) => self.errors.push(e),
                 },
                 None => {
@@ -368,11 +376,17 @@ impl SemanticAnalyzer {
                 if let Some(init) = initializer {
                     // self.check_expr(init, local_scope );
                     match self.type_of(init, local_scope) {
-                        Ok(init_ty) => {
-                            if let Err(e) = self.check_assignable(var_type, &init_ty) {
-                                self.errors.push(e);
+                        Ok(init_ty) => match self.check_assignable(var_type, &init_ty) {
+                            Some(_) => {}
+                            None => {
+                                self.errors.push(CompilerError::new(
+                                    ErrorType::TypeError,
+                                    1,
+                                    1,
+                                    &format!("types of {var_type:?} and {init_ty:?} dont match"),
+                                ));
                             }
-                        }
+                        },
                         Err(e) => self.errors.push(e),
                     }
                 }
