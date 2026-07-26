@@ -4,16 +4,21 @@ use crate::{
 };
 use std::collections::HashMap;
 
-/// first pass validation
 /// - check variable/function declaration order
 /// - validate scoping rules
 /// - detect use-before-declaration errors
 /// - validate function signatures match between declaration and definition
-/// - Type checking
+/// - Stamps TypedExpr with their type
 pub struct SemanticAnalyzer {
     // TODO: use indexes instead of strings and save the functions in another table maybe? add one level of indirection
     declared_functions: HashMap<String, Function>,
     errors: Vec<CompilerError>,
+}
+
+impl Default for SemanticAnalyzer {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl SemanticAnalyzer {
@@ -58,9 +63,6 @@ impl SemanticAnalyzer {
     /// - No check that a nonvoid function actually returns on every path. a
     ///   function can fall off the end and only `Return` statements are validated.
     /// - `main`'s signature is not validated here (the parser only checks it exists).
-    /// - Resolved types are computed and thrown away. Codegen rederives them,
-    ///   which is the source of the i8/i32 coercion patches. Stamping types onto
-    ///   the AST here would let codegen stop guessing.
     pub fn analyze(&mut self, program: &mut Program) -> Result<(), Vec<CompilerError>> {
         for function in &program.function_def {
             self.declared_functions
@@ -71,9 +73,8 @@ impl SemanticAnalyzer {
         for global in program.global_vars.as_mut_slice() {
             if let Some(init) = global.initializer.as_mut() {
                 let local_scope = LocalScope::new(&seen_globals);
-                match self.type_of(init, &local_scope) {
-                    Ok(t) => init.type_ = Some(t),
-                    Err(e) => self.errors.push(e),
+                if let Err(e) = self.type_of(init, &local_scope) {
+                    self.errors.push(e);
                 }
             }
             seen_globals.insert(global.name.name.clone(), global._type.clone());
@@ -250,7 +251,7 @@ impl SemanticAnalyzer {
                         ErrorType::TypeError,
                         1,
                         1,
-                        &format!("ternary operation represents different types as outcome: "),
+                        "ternary operation represents different types as outcome",
                     ));
                 }
                 true_t

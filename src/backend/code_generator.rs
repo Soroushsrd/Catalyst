@@ -18,12 +18,6 @@ struct VariableInfo<'ctx> {
     pub var_type: Types,
 }
 
-#[allow(dead_code)]
-struct FunctionInfo {
-    name: String,
-    return_type: Types,
-    parameters: Vec<Parameter>,
-}
 pub struct LLVMCodeGenerator<'ctx> {
     pub context: &'ctx Context,
     pub module: Module<'ctx>,
@@ -333,7 +327,7 @@ impl<'ctx> LLVMCodeGenerator<'ctx> {
         counter_declaration: &Option<Box<Statement>>,
         incrementor: &Option<TypedExpr>,
         condition: &Option<TypedExpr>,
-        body: &Box<Statement>,
+        body: &Statement,
     ) -> Result<(), String> {
         let loop_init = self
             .context
@@ -370,7 +364,7 @@ impl<'ctx> LLVMCodeGenerator<'ctx> {
         }
 
         if let Some(init_stmnt) = counter_declaration {
-            self.generate_statement(&init_stmnt)?;
+            self.generate_statement(init_stmnt)?;
         }
 
         self.builder
@@ -421,13 +415,13 @@ impl<'ctx> LLVMCodeGenerator<'ctx> {
         name: &Identifier,
         initializer: &Option<TypedExpr>,
     ) -> Result<(), String> {
-        if let Some(current_scope) = self.scope_stack.last() {
-            if current_scope.contains_key(&name.name) {
-                return Err(format!(
-                    "variable {} already declared in this scope",
-                    name.name
-                ));
-            }
+        if let Some(current_scope) = self.scope_stack.last()
+            && current_scope.contains_key(&name.name)
+        {
+            return Err(format!(
+                "variable {} already declared in this scope",
+                name.name
+            ));
         }
         let llvm_type = self.llvm_type_from_ast(var_type)?;
         let alloca = if let Some(func) = self.current_function {
@@ -479,7 +473,7 @@ impl<'ctx> LLVMCodeGenerator<'ctx> {
     fn generate_if_statement(
         &mut self,
         condition: &TypedExpr,
-        then_branch: &Box<Statement>,
+        then_branch: &Statement,
         else_branch: &Option<Box<Statement>>,
     ) -> Result<(), String> {
         let condition_value = self.generate_expressions(condition)?;
@@ -524,7 +518,7 @@ impl<'ctx> LLVMCodeGenerator<'ctx> {
 
     fn generate_do_while_statement(
         &mut self,
-        body: &Box<Statement>,
+        body: &Statement,
         condition: &TypedExpr,
     ) -> Result<(), String> {
         let loop_body = self
@@ -566,7 +560,7 @@ impl<'ctx> LLVMCodeGenerator<'ctx> {
     fn generate_while_statement(
         &mut self,
         condition: &TypedExpr,
-        then_branch: &Box<Statement>,
+        then_branch: &Statement,
     ) -> Result<(), String> {
         let loop_cond = self
             .context
@@ -642,12 +636,9 @@ impl<'ctx> LLVMCodeGenerator<'ctx> {
         }
     }
 
-    fn generate_dereference(
-        &mut self,
-        expr: &Box<TypedExpr>,
-    ) -> Result<BasicValueEnum<'ctx>, String> {
+    fn generate_dereference(&mut self, expr: &TypedExpr) -> Result<BasicValueEnum<'ctx>, String> {
         let load_type = self.get_deref_load_type(expr)?;
-        let ptr_value = self.generate_expressions(&expr)?;
+        let ptr_value = self.generate_expressions(expr)?;
         let ptr = ptr_value.into_pointer_value();
 
         let loaded = self
@@ -686,10 +677,7 @@ impl<'ctx> LLVMCodeGenerator<'ctx> {
         }
     }
 
-    fn generate_address_of(
-        &mut self,
-        expr: &Box<TypedExpr>,
-    ) -> Result<BasicValueEnum<'ctx>, String> {
+    fn generate_address_of(&mut self, expr: &TypedExpr) -> Result<BasicValueEnum<'ctx>, String> {
         match expr.kind {
             Expression::Identifier(ref name) => {
                 // pointer to the variable (alloca or global)
@@ -712,9 +700,9 @@ impl<'ctx> LLVMCodeGenerator<'ctx> {
 
     fn generate_binary_op(
         &mut self,
-        left: &Box<TypedExpr>,
+        left: &TypedExpr,
         operator: &BinaryOperator,
-        right: &Box<TypedExpr>,
+        right: &TypedExpr,
     ) -> Result<BasicValueEnum<'ctx>, String> {
         match operator {
             BinaryOperator::And => {
@@ -926,7 +914,7 @@ impl<'ctx> LLVMCodeGenerator<'ctx> {
 
             let loaded = self
                 .builder
-                .build_load(llvm_type, ptr_value, &ident)
+                .build_load(llvm_type, ptr_value, ident)
                 .map_err(|e| format!("failed to load variable: {e}"))?;
             return Ok(loaded);
         }
@@ -948,9 +936,9 @@ impl<'ctx> LLVMCodeGenerator<'ctx> {
 
     fn generate_ternary_op(
         &mut self,
-        condition: &Box<TypedExpr>,
-        true_expr: &Box<TypedExpr>,
-        false_expr: &Box<TypedExpr>,
+        condition: &TypedExpr,
+        true_expr: &TypedExpr,
+        false_expr: &TypedExpr,
     ) -> Result<BasicValueEnum<'ctx>, String> {
         let cond_val = self.generate_expressions(condition)?;
         let cond_bool = self.build_not_zero(cond_val)?;
@@ -1036,8 +1024,8 @@ impl<'ctx> LLVMCodeGenerator<'ctx> {
     // TODO: handle pointer assignment in here
     fn generate_assignment(
         &mut self,
-        target: &Box<TypedExpr>,
-        value: &Box<TypedExpr>,
+        target: &TypedExpr,
+        value: &TypedExpr,
     ) -> Result<BasicValueEnum<'ctx>, String> {
         let val = self.generate_expressions(value)?;
 
@@ -1061,7 +1049,7 @@ impl<'ctx> LLVMCodeGenerator<'ctx> {
                 Err(format!("Undefined variable in assignment: {}", name))
             }
             Expression::Dereference(inner) => {
-                let ptr_value = self.generate_expressions(&inner)?;
+                let ptr_value = self.generate_expressions(inner)?;
                 let ptr = ptr_value.into_pointer_value();
                 self.builder
                     .build_store(ptr, val)
@@ -1072,10 +1060,7 @@ impl<'ctx> LLVMCodeGenerator<'ctx> {
         }
     }
 
-    fn generate_bitwise_not(
-        &mut self,
-        expr: &Box<TypedExpr>,
-    ) -> Result<BasicValueEnum<'ctx>, String> {
+    fn generate_bitwise_not(&mut self, expr: &TypedExpr) -> Result<BasicValueEnum<'ctx>, String> {
         let val = self.generate_expressions(expr)?;
         Ok(self
             .builder
@@ -1084,10 +1069,7 @@ impl<'ctx> LLVMCodeGenerator<'ctx> {
             .into())
     }
 
-    fn generate_logical_not(
-        &mut self,
-        expr: &Box<TypedExpr>,
-    ) -> Result<BasicValueEnum<'ctx>, String> {
+    fn generate_logical_not(&mut self, expr: &TypedExpr) -> Result<BasicValueEnum<'ctx>, String> {
         let val = self.generate_expressions(expr)?;
         let is_zero = self
             .builder
@@ -1107,10 +1089,7 @@ impl<'ctx> LLVMCodeGenerator<'ctx> {
         Ok(result.into())
     }
 
-    fn generate_unary_minus(
-        &mut self,
-        expr: &Box<TypedExpr>,
-    ) -> Result<BasicValueEnum<'ctx>, String> {
+    fn generate_unary_minus(&mut self, expr: &TypedExpr) -> Result<BasicValueEnum<'ctx>, String> {
         let val = self.generate_expressions(expr)?;
         Ok(self
             .builder

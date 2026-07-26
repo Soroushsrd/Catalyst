@@ -545,8 +545,6 @@ impl Parser {
             Some(Box::new(Statement::Expression(expr)))
         };
 
-        if init.is_none() {}
-
         let condition = if self.check_token_type(&TokenType::Semicolon) {
             self.consume_type(&TokenType::Semicolon, "expected ;")?;
             None
@@ -570,7 +568,7 @@ impl Parser {
         Ok(Statement::For {
             counter_declaration: init,
             incrementor: increment,
-            condition: condition,
+            condition,
             body,
         })
     }
@@ -598,7 +596,7 @@ impl Parser {
 
         Ok(Statement::DoWhile {
             body: Box::new(body),
-            condition: condition,
+            condition,
         })
     }
 
@@ -1066,10 +1064,10 @@ impl Parser {
         };
         let source_line = self.get_source_line(line);
 
-        if suggestion.is_some() {
+        if let Some(sug) = suggestion {
             CompilerError::new(error_type, line, column, message)
                 .with_source_line(&source_line)
-                .with_suggestion(suggestion.unwrap())
+                .with_suggestion(sug)
         } else {
             CompilerError::new(error_type, line, column, message).with_source_line(&source_line)
         }
@@ -1100,10 +1098,10 @@ impl Parser {
         while !self.is_at_end() {
             //either stop at semicolon or at keywords. thus skipping the problematic area that caused
             // the error to pop up
-            if let Some(prev) = self.previous() {
-                if matches!(prev.token_type(), TokenType::Semicolon) {
-                    return;
-                }
+            if let Some(prev) = self.previous()
+                && matches!(prev.token_type(), TokenType::Semicolon)
+            {
+                return;
             }
             if let Some(token) = self.peek() {
                 match token.token_type() {

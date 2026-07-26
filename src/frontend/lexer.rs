@@ -365,10 +365,10 @@ impl Scanner {
     }
     fn add_error(&mut self, error_type: ErrorType, message: &str, suggestion: Option<&str>) {
         let source_line = self.get_current_line();
-        let error = if suggestion.is_some() {
+        let error = if let Some(sug) = suggestion {
             CompilerError::new(error_type, self.line, self.column, message)
                 .with_source_line(source_line)
-                .with_suggestion(suggestion.unwrap())
+                .with_suggestion(sug)
         } else {
             CompilerError::new(error_type, self.line, self.column, message)
                 .with_source_line(source_line)

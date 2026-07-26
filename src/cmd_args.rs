@@ -19,7 +19,7 @@ static ARGS: OnceLock<CmdArgs> = OnceLock::new();
 
 /// global read only access to args
 pub fn get() -> &'static CmdArgs {
-    ARGS.get_or_init(|| CmdArgs::parse())
+    ARGS.get_or_init(CmdArgs::parse)
 }
 
 /// just in case you don't need args but you want to make sure they are valid and return if not
