@@ -1,8 +1,19 @@
+#[derive(Debug, Clone, Copy)]
+pub struct Span {
+    line: usize,
+    column: usize,
+}
+
+impl Span {
+    pub fn new(line: usize, column: usize) -> Self {
+        Self { line, column }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct CompilerError {
     pub error_type: ErrorType,
-    pub line: usize,
-    pub column: usize,
+    pub span: Span,
     pub message: String,
     pub source_line: Option<String>,
     pub suggestion: Option<String>,
@@ -30,10 +41,10 @@ impl Default for CompilerError {
 
 impl CompilerError {
     pub fn new(error_type: ErrorType, line: usize, column: usize, message: &str) -> Self {
+        let span = Span::new(line, column);
         Self {
             error_type,
-            line,
-            column,
+            span,
             message: message.to_string(),
             source_line: None,
             suggestion: None,
@@ -65,14 +76,18 @@ impl CompilerError {
         ));
         output.push_str(&format!(
             "  \x1b[34m-->\x1b[0m line {}:{}\n",
-            self.line, self.column
+            self.span.line, self.span.column
         ));
 
         if let Some(source_line) = &self.source_line {
             output.push_str("   |\n");
-            output.push_str(&format!("{:3}| {}\n", self.line, source_line));
+            output.push_str(&format!("{:3}| {}\n", self.span.line, source_line));
 
-            let spaces = if self.column > 0 { self.column - 1 } else { 0 };
+            let spaces = if self.span.column > 0 {
+                self.span.column - 1
+            } else {
+                0
+            };
             output.push_str(&format!("   | {}\x1b[31m^\x1b[0m\n", " ".repeat(spaces)));
         }
 

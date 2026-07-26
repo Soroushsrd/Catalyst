@@ -393,8 +393,8 @@ pub struct Token {
     pub type_: TokenType,
     lexeme: String,
     literal: String,
-    line: usize,
-    column: usize,
+    pub line: usize,
+    pub column: usize,
 }
 
 impl Token {

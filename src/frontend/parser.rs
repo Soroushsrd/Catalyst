@@ -18,7 +18,7 @@
 *    and using local variables to break up overlapping borrows.
 *********************************/
 use crate::{
-    errors::{CompilerError, ErrorType},
+    errors::{CompilerError, ErrorType, Span},
     expect_token,
     frontend::lexer::{Token, TokenType},
 };
@@ -123,14 +123,14 @@ pub enum Statement {
 pub struct TypedExpr {
     pub kind: Expression,
     pub type_: Option<Types>,
+    pub span: Span,
 }
 
-impl From<Expression> for TypedExpr {
-    fn from(value: Expression) -> Self {
-        Self {
-            kind: value,
-            type_: None,
-        }
+fn make_expr(kind: Expression, span: Span) -> TypedExpr {
+    TypedExpr {
+        kind,
+        type_: None,
+        span,
     }
 }
 
@@ -376,7 +376,7 @@ impl Parser {
         );
         let expression = match ident.token_type() {
             TokenType::Identifier(name) => Ok(Identifier { name: name.clone() }),
-            _ => Err(self.error(ErrorType::SyntaxError, "Expected identifier", None)),
+            _ => Err(self.error(ErrorType::MissingToken, "Expected identifier", None)),
         };
         self.advance();
         expression
@@ -679,7 +679,7 @@ impl Parser {
             });
         }
         Err(self.error(
-            ErrorType::SyntaxError,
+            ErrorType::MissingToken,
             "Conditiosns should be inside parenthesis",
             Some("use parenthesis!"),
         ))
@@ -790,10 +790,14 @@ impl Parser {
 
             match &expr.kind {
                 Expression::Identifier(_) | Expression::Dereference(_) => {
-                    Ok(TypedExpr::from(Expression::Assignment {
-                        target: Box::new(expr),
-                        value: Box::new(value),
-                    }))
+                    let span = expr.span.clone();
+                    Ok(make_expr(
+                        Expression::Assignment {
+                            target: Box::new(expr),
+                            value: Box::new(value),
+                        },
+                        span,
+                    ))
                 }
                 _ => Err(self.error(
                     ErrorType::InvalidAssignment,
@@ -838,11 +842,15 @@ impl Parser {
             self.advance();
 
             let right = self.parse_binary_expression(precendence + 1)?;
-            left = TypedExpr::from(Expression::Binary {
-                left: Box::new(left),
-                operator,
-                right: Box::new(right),
-            });
+            let span = left.span.clone();
+            left = make_expr(
+                Expression::Binary {
+                    left: Box::new(left),
+                    operator,
+                    right: Box::new(right),
+                },
+                span,
+            );
         }
         Ok(left)
     }
@@ -860,11 +868,15 @@ impl Parser {
             self.consume_type(&TokenType::Colon, "expected a colon (:)")?;
             let false_expr = self.parse_assignment()?;
 
-            Ok(TypedExpr::from(Expression::TernaryOP {
-                condition: Box::new(condition),
-                true_expr: Box::new(true_expr),
-                false_expr: Box::new(false_expr),
-            }))
+            let span = condition.span.clone();
+            Ok(make_expr(
+                Expression::TernaryOP {
+                    condition: Box::new(condition),
+                    true_expr: Box::new(true_expr),
+                    false_expr: Box::new(false_expr),
+                },
+                span,
+            ))
         } else {
             Ok(condition)
         }
@@ -879,31 +891,32 @@ impl Parser {
         )
         .clone();
 
+        let span = Span::new(token.line, token.column);
         match token.token_type() {
             TokenType::Minus => {
                 self.advance();
                 let expr = self.parse_unary_expression()?;
-                Ok(TypedExpr::from(Expression::UnaryMinus(Box::new(expr))))
+                Ok(make_expr(Expression::UnaryMinus(Box::new(expr)), span))
             }
             TokenType::Bang => {
                 self.advance();
                 let expr = self.parse_unary_expression()?;
-                Ok(TypedExpr::from(Expression::LogicalNot(Box::new(expr))))
+                Ok(make_expr(Expression::LogicalNot(Box::new(expr)), span))
             }
             TokenType::BitwiseNot => {
                 self.advance();
                 let expr = self.parse_unary_expression()?;
-                Ok(TypedExpr::from(Expression::BitwiseNot(Box::new(expr))))
+                Ok(make_expr(Expression::BitwiseNot(Box::new(expr)), span))
             }
             TokenType::Ampersand => {
                 self.advance();
                 let expr = self.parse_unary_expression()?;
-                Ok(TypedExpr::from(Expression::AddressOf(Box::new(expr))))
+                Ok(make_expr(Expression::AddressOf(Box::new(expr)), span))
             }
             TokenType::Star => {
                 self.advance();
                 let expr = self.parse_unary_expression()?;
-                Ok(TypedExpr::from(Expression::Dereference(Box::new(expr))))
+                Ok(make_expr(Expression::Dereference(Box::new(expr)), span))
             }
             _ => self.parse_primary_expression(),
         }
@@ -912,6 +925,7 @@ impl Parser {
     /// based on token type defined in lexer module, parses the primary tokens
     /// then matches it agains expressions and advances one token forward
     fn parse_primary_expression(&self) -> ParseResult<TypedExpr> {
+        let span = self.with_current_span();
         let token = match self.advance() {
             Some(token) => token,
             None => {
@@ -924,8 +938,8 @@ impl Parser {
         };
         let expression = match token.token_type() {
             // TODO: think of replacing f32 for numbers. probably needs expansion of Number type
-            TokenType::Number(value) => TypedExpr::from(Expression::Number(*value)),
-            TokenType::CharLiteral(ch) => TypedExpr::from(Expression::CharLiteral(*ch)),
+            TokenType::Number(value) => make_expr(Expression::Number(*value), span),
+            TokenType::CharLiteral(ch) => make_expr(Expression::CharLiteral(*ch), span),
             TokenType::Identifier(name) => {
                 // in case we run into a function
 
@@ -952,12 +966,15 @@ impl Parser {
 
                     self.consume_type(&TokenType::RightParen, "Expected ')' after arguments")?;
 
-                    TypedExpr::from(Expression::FunctionCall {
-                        name: name.clone(),
-                        arguments,
-                    })
+                    make_expr(
+                        Expression::FunctionCall {
+                            name: name.clone(),
+                            arguments,
+                        },
+                        span,
+                    )
                 } else {
-                    TypedExpr::from(Expression::Identifier(name.clone()))
+                    make_expr(Expression::Identifier(name.clone()), span)
                 }
             }
             TokenType::LeftParen => {
@@ -966,7 +983,7 @@ impl Parser {
                 expr
             }
             _ => {
-                return Err(self.error(ErrorType::SyntaxError, "Unexpected token", None));
+                return Err(self.error(ErrorType::UnexpectedToken, "Unexpected token", None));
             }
         };
 
@@ -1055,12 +1072,23 @@ impl Parser {
         message: &str,
         suggestion: Option<&str>,
     ) -> CompilerError {
-        let (line, column) = if let Some(token) = self.peek() {
-            (token.line(), token.column())
-        } else if let Some(token) = self.previous() {
-            (token.line(), token.column())
-        } else {
-            (1, 1)
+        let (line, column) = match error_type {
+            ErrorType::MissingToken => {
+                if let Some(token) = self.previous() {
+                    (token.line(), token.column())
+                } else {
+                    (1, 1)
+                }
+            }
+            _ => {
+                if let Some(token) = self.peek() {
+                    (token.line(), token.column())
+                } else if let Some(token) = self.previous() {
+                    (token.line(), token.column())
+                } else {
+                    (1, 1)
+                }
+            }
         };
         let source_line = self.get_source_line(line);
 
@@ -1236,5 +1264,11 @@ impl Parser {
                 }
             }
         }
+    }
+    fn with_current_span(&self) -> Span {
+        self.peek()
+            .or_else(|| self.previous())
+            .map(|l| Span::new(l.line, l.column))
+            .unwrap_or(Span::new(1, 1))
     }
 }
