@@ -61,18 +61,19 @@ impl SemanticAnalyzer {
     /// - Resolved types are computed and thrown away. Codegen rederives them,
     ///   which is the source of the i8/i32 coercion patches. Stamping types onto
     ///   the AST here would let codegen stop guessing.
-    pub fn analyze(&mut self, program: &Program) -> Result<(), Vec<CompilerError>> {
+    pub fn analyze(&mut self, program: &mut Program) -> Result<(), Vec<CompilerError>> {
         for function in &program.function_def {
             self.declared_functions
                 .insert(function.name.name.clone(), function.clone());
         }
 
         let mut seen_globals: HashMap<String, Types> = HashMap::new();
-        for global in &program.global_vars {
-            if let Some(init) = &global.initializer {
+        for global in program.global_vars.as_mut_slice() {
+            if let Some(init) = global.initializer.as_mut() {
                 let local_scope = LocalScope::new(&seen_globals);
-                if let Err(e) = self.type_of(init, &local_scope) {
-                    self.errors.push(e);
+                match self.type_of(init, &local_scope) {
+                    Ok(t) => init.type_ = Some(t),
+                    Err(e) => self.errors.push(e),
                 }
             }
             seen_globals.insert(global.name.name.clone(), global._type.clone());
@@ -83,7 +84,7 @@ impl SemanticAnalyzer {
             .iter()
             .map(|g| (g.name.name.clone(), g._type.clone()))
             .collect();
-        for function in &program.function_def {
+        for function in &mut program.function_def {
             if !function.forward_dec {
                 let mut local_scope = LocalScope::new(&globals);
 
@@ -94,7 +95,7 @@ impl SemanticAnalyzer {
                     }
                 }
 
-                self.check_statement(&function.body, &mut local_scope, &function.return_type);
+                self.check_statement(&mut function.body, &mut local_scope, &function.return_type);
             }
         }
 
@@ -104,6 +105,7 @@ impl SemanticAnalyzer {
             Err(self.errors.clone())
         }
     }
+
     /// Computes the type of an expression, checking it for validity along the way.
     ///
     /// This is the core of the type checker. It's written as a single recursive
@@ -125,11 +127,15 @@ impl SemanticAnalyzer {
     ///   to mix pointers with anything), so `ptr + 1` won't type check.
     /// - `LogicalNot`/`BitwiseNot` pass the operand type through unchanged rather
     ///   than normalizing to Int, which is loose relative to C semantics.
-    fn type_of(&mut self, expr: &Expression, scope: &LocalScope) -> Result<Types, CompilerError> {
-        match expr {
+    fn type_of(
+        &mut self,
+        expr: &mut TypedExpr,
+        scope: &LocalScope,
+    ) -> Result<Types, CompilerError> {
+        let t = match &mut expr.kind {
             // TODO: a function to analyuze the type of the number here
-            Expression::Number(_) => Ok(Types::Int),
-            Expression::CharLiteral(_) => Ok(Types::Char),
+            Expression::Number(_) => Types::Int,
+            Expression::CharLiteral(_) => Types::Char,
             Expression::Identifier(ident) => scope
                 .lookup_type(ident)
                 .ok_or(
@@ -140,8 +146,8 @@ impl SemanticAnalyzer {
                         &format!("failed to find {ident} in local scope"),
                     )
                     .with_suggestion("Are you sure you defined the variable?"),
-                )
-                .cloned(),
+                )?
+                .clone(),
             Expression::Binary {
                 left,
                 operator,
@@ -157,28 +163,30 @@ impl SemanticAnalyzer {
                     | BinaryOperator::Less
                     | BinaryOperator::LessEqual => {
                         self.check_comparable(&left_type, &right_type)?;
-                        Ok(Types::Int)
+                        Types::Int
                     }
-                    _ => self.unify_arithmetic(&left_type, &right_type),
+                    _ => self.unify_arithmetic(&left_type, &right_type)?,
                 }
             }
             Expression::AddressOf(expr) => {
                 let inner_type = self.type_of(expr, scope)?;
-                Ok(Types::Pointer(Box::new(inner_type)))
+                Types::Pointer(Box::new(inner_type))
             }
             Expression::Dereference(expr) => match self.type_of(expr, scope)? {
-                Types::Pointer(inner) => Ok(*inner),
-                _ => Err(CompilerError::new(
-                    ErrorType::TypeError,
-                    1,
-                    1,
-                    "Only pointers can be dereferenced",
-                )),
+                Types::Pointer(inner) => *inner,
+                _ => {
+                    return Err(CompilerError::new(
+                        ErrorType::TypeError,
+                        1,
+                        1,
+                        "Only pointers can be dereferenced",
+                    ));
+                }
             },
             Expression::Assignment { target, value } => {
                 let t_type = self.type_of(target, scope)?;
                 let v_type = self.type_of(value, scope)?;
-                self.check_assignable(&t_type, &v_type)
+                self.check_assignable(&t_type, &v_type)?
             }
             Expression::FunctionCall { name, arguments } => {
                 let (param_types, return_type) = match self.declared_functions.get(name) {
@@ -212,7 +220,8 @@ impl SemanticAnalyzer {
                     )
                     .with_suggestion("check the number of arguments"));
                 }
-                for (i, (arg, expected)) in arguments.iter().zip(param_types.iter()).enumerate() {
+                for (i, (arg, expected)) in arguments.iter_mut().zip(param_types.iter()).enumerate()
+                {
                     let actual = self.type_of(arg, scope)?;
                     if let Err(e) = self.check_assignable(expected, &actual) {
                         return Err(CompilerError::new(
@@ -226,7 +235,7 @@ impl SemanticAnalyzer {
                         ));
                     }
                 }
-                Ok(return_type)
+                return_type
             }
 
             Expression::TernaryOP {
@@ -244,18 +253,22 @@ impl SemanticAnalyzer {
                         &format!("ternary operation represents different types as outcome: "),
                     ));
                 }
-                Ok(true_t)
+                true_t
             }
-            Expression::BitwiseNot(tt) => self.type_of(tt, scope),
-            Expression::LogicalNot(tt) => self.type_of(tt, scope),
-            Expression::UnaryMinus(tt) => self.type_of(tt, scope),
-            Expression::Unknown => Err(CompilerError::new(
-                ErrorType::TypeError,
-                1,
-                1,
-                "Unknown type",
-            )),
-        }
+            Expression::BitwiseNot(tt) => self.type_of(tt, scope)?,
+            Expression::LogicalNot(tt) => self.type_of(tt, scope)?,
+            Expression::UnaryMinus(tt) => self.type_of(tt, scope)?,
+            Expression::Unknown => {
+                return Err(CompilerError::new(
+                    ErrorType::TypeError,
+                    1,
+                    1,
+                    "Unknown type",
+                ));
+            }
+        };
+        expr.type_ = Some(t.clone());
+        Ok(t)
     }
 
     /// Arithmetic binary ops (+ - * / %): result is the unified operand type.
@@ -305,7 +318,7 @@ impl SemanticAnalyzer {
     }
 
     // TODO: check if we can remove check_expression_in_function method
-    fn check_expr(&mut self, expr: &Expression, scope: &LocalScope) {
+    fn check_expr(&mut self, expr: &mut TypedExpr, scope: &LocalScope) {
         if let Err(e) = self.type_of(expr, scope) {
             self.errors.push(e);
         }
@@ -313,7 +326,7 @@ impl SemanticAnalyzer {
 
     fn check_statement(
         &mut self,
-        stmt: &Statement,
+        stmt: &mut Statement,
         local_scope: &mut LocalScope,
         return_type: &Types,
     ) {

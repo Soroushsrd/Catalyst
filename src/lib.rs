@@ -99,7 +99,7 @@ pub fn run(source_code: &str, file_name: &str) -> Result<()> {
 
     let mut parser = Parser::new(tokens, source_code);
     match parser.parse() {
-        Ok(ast) => {
+        Ok(mut ast) => {
             if !parser.get_errors().is_empty() {
                 for error in parser.get_errors() {
                     eprintln!("{}", error.format_error());
@@ -113,7 +113,7 @@ pub fn run(source_code: &str, file_name: &str) -> Result<()> {
             // TODO: scope resolution and type checking/stamping should be done at this level.
             // we should then have the analyzer pass down a bindingtable instead of returning nothing
             let mut analyzer = SemanticAnalyzer::new();
-            if let Err(semantic_errors) = analyzer.analyze(&ast) {
+            if let Err(semantic_errors) = analyzer.analyze(&mut ast) {
                 for error in semantic_errors {
                     eprintln!("{}", error.format_error());
                 }

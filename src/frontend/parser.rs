@@ -43,7 +43,7 @@ pub enum TopLvlDecs {
 pub struct GlobalVariable {
     pub _type: Types,
     pub name: Identifier,
-    pub initializer: Option<Expression>,
+    pub initializer: Option<TypedExpr>,
 }
 
 /// functions consist of a name (identifier) and a
@@ -66,7 +66,6 @@ pub struct Identifier {
 
 #[derive(Debug, Clone)]
 pub struct Parameter {
-    #[allow(dead_code)]
     pub parameter_type: Types,
     pub name: Option<Identifier>,
 }
@@ -87,38 +86,52 @@ pub enum Types {
 pub enum Statement {
     Empty,
     Block(Vec<Statement>),
-    Return(Option<Expression>),
+    Return(Option<TypedExpr>),
     VarDeclaration {
         var_type: Types,
         name: Identifier,
-        initializer: Option<Expression>,
+        initializer: Option<TypedExpr>,
     },
     // used for expressions like:
     //      x = 5;
     //      foo();
     //      a+b;
-    Expression(Expression),
+    Expression(TypedExpr),
     If {
-        condition: Expression,
+        condition: TypedExpr,
         then_branch: Box<Statement>,
         else_branch: Option<Box<Statement>>,
     },
     While {
-        condition: Expression,
+        condition: TypedExpr,
         then_branch: Box<Statement>,
     },
     DoWhile {
         body: Box<Statement>,
-        condition: Expression,
+        condition: TypedExpr,
     },
     For {
         counter_declaration: Option<Box<Statement>>,
-        incrementor: Option<Expression>,
-        condition: Option<Expression>,
+        incrementor: Option<TypedExpr>,
+        condition: Option<TypedExpr>,
         body: Box<Statement>,
     },
     Break,
     Continue,
+}
+#[derive(Debug, Clone)]
+pub struct TypedExpr {
+    pub kind: Expression,
+    pub type_: Option<Types>,
+}
+
+impl From<Expression> for TypedExpr {
+    fn from(value: Expression) -> Self {
+        Self {
+            kind: value,
+            type_: None,
+        }
+    }
 }
 
 /// evaluates to a value and can be used as part of other expressions
@@ -129,25 +142,25 @@ pub enum Expression {
     Identifier(String),
     Number(f32),
     CharLiteral(char),
-    BitwiseNot(Box<Expression>),
-    UnaryMinus(Box<Expression>),
-    LogicalNot(Box<Expression>),
-    AddressOf(Box<Expression>),
-    Dereference(Box<Expression>),
+    BitwiseNot(Box<TypedExpr>),
+    UnaryMinus(Box<TypedExpr>),
+    LogicalNot(Box<TypedExpr>),
+    AddressOf(Box<TypedExpr>),
+    Dereference(Box<TypedExpr>),
     Binary {
-        left: Box<Expression>,
+        left: Box<TypedExpr>,
         operator: BinaryOperator,
-        right: Box<Expression>,
+        right: Box<TypedExpr>,
     },
     Assignment {
-        target: Box<Expression>,
-        value: Box<Expression>,
+        target: Box<TypedExpr>,
+        value: Box<TypedExpr>,
     },
     // as in a ? 1 : 2;
     TernaryOP {
-        condition: Box<Expression>,
-        true_expr: Box<Expression>,
-        false_expr: Box<Expression>,
+        condition: Box<TypedExpr>,
+        true_expr: Box<TypedExpr>,
+        false_expr: Box<TypedExpr>,
     },
     FunctionCall {
         name: String,
@@ -157,7 +170,7 @@ pub enum Expression {
         // foo()
         // or
         // foo(a+b)
-        arguments: Vec<Expression>,
+        arguments: Vec<TypedExpr>,
     },
 }
 
@@ -765,24 +778,24 @@ impl Parser {
     ///         └── parse_binary_expression(0)
     ///             └── parse_unary_expression()
     ///                 └── parse_primary_expression()  (highest precedence)
-    fn parse_expression(&self) -> ParseResult<Expression> {
+    fn parse_expression(&self) -> ParseResult<TypedExpr> {
         self.parse_assignment()
     }
 
     /// handles assignment expressions such as int a = 1;
-    fn parse_assignment(&self) -> ParseResult<Expression> {
+    fn parse_assignment(&self) -> ParseResult<TypedExpr> {
         let expr = self.parse_ternary_operation()?;
 
         if self.check_token_type(&TokenType::Equal) {
             self.advance();
             let value = self.parse_assignment()?;
 
-            match expr {
+            match &expr.kind {
                 Expression::Identifier(_) | Expression::Dereference(_) => {
-                    Ok(Expression::Assignment {
+                    Ok(TypedExpr::from(Expression::Assignment {
                         target: Box::new(expr),
                         value: Box::new(value),
-                    })
+                    }))
                 }
                 _ => Err(self.error(
                     ErrorType::InvalidAssignment,
@@ -799,7 +812,7 @@ impl Parser {
     /// then parses the binary operators
     /// and based on operator precedence,
     /// parses the complete binary expression repeatedly
-    fn parse_binary_expression(&self, min_precedence: u8) -> ParseResult<Expression> {
+    fn parse_binary_expression(&self, min_precedence: u8) -> ParseResult<TypedExpr> {
         let mut left = self.parse_unary_expression()?;
 
         while let Some(token) = self.peek() {
@@ -827,18 +840,18 @@ impl Parser {
             self.advance();
 
             let right = self.parse_binary_expression(precendence + 1)?;
-            left = Expression::Binary {
+            left = TypedExpr::from(Expression::Binary {
                 left: Box::new(left),
                 operator,
                 right: Box::new(right),
-            };
+            });
         }
         Ok(left)
     }
 
     /// parses ternary conditional expressions: condition ? true_expr : false_expr
     /// obviously ternary operators are right associative so this parsing is done with that in mind
-    fn parse_ternary_operation(&self) -> ParseResult<Expression> {
+    fn parse_ternary_operation(&self) -> ParseResult<TypedExpr> {
         let condition = self.parse_binary_expression(0)?;
 
         if self.check_token_type(&TokenType::QMark) {
@@ -849,17 +862,17 @@ impl Parser {
             self.consume_type(&TokenType::Colon, "expected a colon (:)")?;
             let false_expr = self.parse_assignment()?;
 
-            Ok(Expression::TernaryOP {
+            Ok(TypedExpr::from(Expression::TernaryOP {
                 condition: Box::new(condition),
                 true_expr: Box::new(true_expr),
                 false_expr: Box::new(false_expr),
-            })
+            }))
         } else {
             Ok(condition)
         }
     }
     /// parses unary expressions like ~, !, -
-    fn parse_unary_expression(&self) -> ParseResult<Expression> {
+    fn parse_unary_expression(&self) -> ParseResult<TypedExpr> {
         let token = expect_token!(
             self,
             ErrorType::UnexpectedToken,
@@ -872,27 +885,27 @@ impl Parser {
             TokenType::Minus => {
                 self.advance();
                 let expr = self.parse_unary_expression()?;
-                Ok(Expression::UnaryMinus(Box::new(expr)))
+                Ok(TypedExpr::from(Expression::UnaryMinus(Box::new(expr))))
             }
             TokenType::Bang => {
                 self.advance();
                 let expr = self.parse_unary_expression()?;
-                Ok(Expression::LogicalNot(Box::new(expr)))
+                Ok(TypedExpr::from(Expression::LogicalNot(Box::new(expr))))
             }
             TokenType::BitwiseNot => {
                 self.advance();
                 let expr = self.parse_unary_expression()?;
-                Ok(Expression::BitwiseNot(Box::new(expr)))
+                Ok(TypedExpr::from(Expression::BitwiseNot(Box::new(expr))))
             }
             TokenType::Ampersand => {
                 self.advance();
                 let expr = self.parse_unary_expression()?;
-                Ok(Expression::AddressOf(Box::new(expr)))
+                Ok(TypedExpr::from(Expression::AddressOf(Box::new(expr))))
             }
             TokenType::Star => {
                 self.advance();
                 let expr = self.parse_unary_expression()?;
-                Ok(Expression::Dereference(Box::new(expr)))
+                Ok(TypedExpr::from(Expression::Dereference(Box::new(expr))))
             }
             _ => self.parse_primary_expression(),
         }
@@ -900,7 +913,7 @@ impl Parser {
 
     /// based on token type defined in lexer module, parses the primary tokens
     /// then matches it agains expressions and advances one token forward
-    fn parse_primary_expression(&self) -> ParseResult<Expression> {
+    fn parse_primary_expression(&self) -> ParseResult<TypedExpr> {
         let token = match self.advance() {
             Some(token) => token,
             None => {
@@ -913,8 +926,8 @@ impl Parser {
         };
         let expression = match token.token_type() {
             // TODO: think of replacing f32 for numbers. probably needs expansion of Number type
-            TokenType::Number(value) => Expression::Number(*value),
-            TokenType::CharLiteral(ch) => Expression::CharLiteral(*ch),
+            TokenType::Number(value) => TypedExpr::from(Expression::Number(*value)),
+            TokenType::CharLiteral(ch) => TypedExpr::from(Expression::CharLiteral(*ch)),
             TokenType::Identifier(name) => {
                 // in case we run into a function
 
@@ -941,12 +954,12 @@ impl Parser {
 
                     self.consume_type(&TokenType::RightParen, "Expected ')' after arguments")?;
 
-                    Expression::FunctionCall {
+                    TypedExpr::from(Expression::FunctionCall {
                         name: name.clone(),
                         arguments,
-                    }
+                    })
                 } else {
-                    Expression::Identifier(name.clone())
+                    TypedExpr::from(Expression::Identifier(name.clone()))
                 }
             }
             TokenType::LeftParen => {
