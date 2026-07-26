@@ -62,6 +62,7 @@ pub struct Function {
 #[derive(Debug, Clone)]
 pub struct Identifier {
     pub name: String,
+    pub span: Span,
 }
 
 #[derive(Debug, Clone)]
@@ -375,7 +376,10 @@ impl Parser {
             None
         );
         let expression = match ident.token_type() {
-            TokenType::Identifier(name) => Ok(Identifier { name: name.clone() }),
+            TokenType::Identifier(name) => Ok(Identifier {
+                name: name.clone(),
+                span: Span::new(ident.line, ident.column),
+            }),
             _ => Err(self.error(ErrorType::MissingToken, "Expected identifier", None)),
         };
         self.advance();
@@ -1248,17 +1252,20 @@ impl Parser {
             .collect::<Vec<_>>();
         for i in 0..implementations.len() {
             for j in (i + 1)..implementations.len() {
-                if implementations[i].name.name == implementations[j].name.name {
+                let func = implementations[j];
+                if implementations[i].name.name == func.name.name {
+                    let span = func.name.span;
                     self.errors.borrow_mut().push(
                         CompilerError::new(
                             ErrorType::SemanticError,
-                            1,
-                            1,
+                            span.line,
+                            span.column,
                             &format!(
                                 "There are multiple forward declarations for '{}'",
                                 implementations[i].name.name
                             ),
                         )
+                        .with_source_line(&self.get_source_line(span.line))
                         .with_suggestion("remove one declaration"),
                     );
                 }
