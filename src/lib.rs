@@ -26,9 +26,19 @@ use std::{
 /// based on the input, extracts file name and then reads the file to a string
 /// then passes the file content to be parsed
 pub fn run_file(path: &str) -> Result<()> {
-    // TODO: reading the file could be optimized for larger files
+    // WARNING: reading the file could be optimized for larger files. keeping this as is for now
+    // we can swap it for mmap if profiling evershows IO to be the bottleneck
     let bytes_str = fs::read_to_string(PathBuf::from_str(path).unwrap())?;
 
+    let output_path = get_output_path(path);
+    run(&bytes_str, output_path.to_str().unwrap())?;
+    Ok(())
+}
+
+/// creates a file with the path passed as cli arg
+/// if no output arg is available, a file with the same filename as input
+/// is created at the same place the input file was ingested
+fn get_output_path(path: &str) -> PathBuf {
     let file_name = PathBuf::from_str(path).expect("failed to create a pathbuf");
     let file_name = match file_name
         .file_name()
@@ -43,14 +53,11 @@ pub fn run_file(path: &str) -> Result<()> {
 
     let source_path = Path::new(path).parent().unwrap_or(Path::new("."));
 
-    let output_path = cmd_args::get()
+    cmd_args::get()
         .output
         .clone()
         .map(|x| PathBuf::from_str(&x).unwrap())
-        .unwrap_or(source_path.join(file_name));
-
-    run(&bytes_str, output_path.to_str().unwrap())?;
-    Ok(())
+        .unwrap_or(source_path.join(file_name))
 }
 
 /// used as the last step to compilation
@@ -110,8 +117,6 @@ pub fn run(source_code: &str, file_name: &str) -> Result<()> {
             // println!("\n***AST***");
             // println!("{ast:#?}");
 
-            // TODO: scope resolution and type checking/stamping should be done at this level.
-            // we should then have the analyzer pass down a bindingtable instead of returning nothing
             let mut analyzer = SemanticAnalyzer::new();
             if let Err(semantic_errors) = analyzer.analyze(&mut ast) {
                 for error in semantic_errors {
@@ -123,7 +128,6 @@ pub fn run(source_code: &str, file_name: &str) -> Result<()> {
             let context = Context::create();
             let mut codegen = LLVMCodeGenerator::new(&context, file_name);
 
-            // TODO: codegen shouldnt handle type checking, scope handling and related matters
             if let Err(e) = codegen.generate_program(&ast) {
                 eprintln!("Code generation failed: {e}");
                 return Err(ErrorKind::Other.into());
