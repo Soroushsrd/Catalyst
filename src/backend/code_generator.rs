@@ -649,31 +649,11 @@ impl<'ctx> LLVMCodeGenerator<'ctx> {
         Ok(loaded)
     }
     /// Determines what LLVM type to load when dereferencing an expression.
-    /// For `*p`  where p is `int*`  -> load i32
-    /// For `*pp` where pp is `int**` -> load ptr
     fn get_deref_load_type(&self, expr: &TypedExpr) -> Result<BasicTypeEnum<'ctx>, String> {
-        match &expr.kind {
-            Expression::Identifier(name) => {
-                let var_type = self
-                    .scope_stack
-                    .iter()
-                    .rev()
-                    .find_map(|scope| scope.get(name))
-                    .map(|info| info.var_type.clone())
-                    .or_else(|| {
-                        self.global_vars
-                            .get(name)
-                            .and_then(|g| g.get_initializer())
-                            .map(|_| Types::Int)
-                    });
-                match var_type {
-                    Some(Types::Pointer(inner)) => self.llvm_type_from_ast(&inner),
-                    Some(other) => Err(format!("cannot dref non pointer types: {other:?}")),
-                    None => Err(format!("unknown variable: {name}")),
-                }
-            }
-            Expression::Dereference(_) => Ok(self.context.ptr_type(AddressSpace::default()).into()),
-            _ => Ok(self.context.i32_type().into()),
+        match &expr.type_ {
+            Some(Types::Pointer(inner)) => self.llvm_type_from_ast(inner),
+            Some(other) => Err(format!("cannot deref non pointer types: {other:?}")),
+            None => Err("dereference target has no resolved type".into()),
         }
     }
 

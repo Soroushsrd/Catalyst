@@ -10,7 +10,6 @@ use std::collections::HashMap;
 /// - validate function signatures match between declaration and definition
 /// - Stamps TypedExpr with their type
 pub struct SemanticAnalyzer {
-    // TODO: use indexes instead of strings and save the functions in another table maybe? add one level of indirection
     declared_functions: HashMap<String, Function>,
     errors: Vec<CompilerError>,
 }
@@ -318,7 +317,6 @@ impl SemanticAnalyzer {
         })
     }
 
-    // TODO: check if we can remove check_expression_in_function method
     fn check_expr(&mut self, expr: &mut TypedExpr, scope: &LocalScope) {
         if let Err(e) = self.type_of(expr, scope) {
             self.errors.push(e);
