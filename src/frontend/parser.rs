@@ -1070,6 +1070,7 @@ impl Parser {
             Err(self.error(ErrorType::MissingToken, error_msg, None))
         }
     }
+    /// cursor based errors. other type of errors are returned as return values for each function that needs them
     fn error(
         &self,
         error_type: ErrorType,
@@ -1167,19 +1168,19 @@ impl Parser {
                 .filter(|f| !f.forward_dec && f.name.name == forward_dec.name.name)
                 .collect::<Vec<&Function>>();
 
-            // TODO: find a way to add the correct line/column number for these errors
-
             if implementations.len() > 1 {
+                let span = forward_dec.name.span;
                 self.errors.borrow_mut().push(
                     CompilerError::new(
                         ErrorType::SemanticError,
-                        1,
-                        1,
+                        span.line,
+                        span.column,
                         &format!(
                             "forward declaration '{}' has multiple implementation",
                             forward_dec.name.name
                         ),
                     )
+                    .with_source_line(&self.get_source_line(span.line))
                     .with_suggestion("remove one of them"),
                 );
                 continue;
@@ -1189,31 +1190,34 @@ impl Parser {
                 let implementation = implementations[0];
 
                 if forward_dec.return_type != implementation.return_type {
+                    let span = forward_dec.name.span;
                     self.errors.borrow_mut().push(CompilerError::new(
                     ErrorType::TypeError,
-                    1,
-                    1,
+                    span.line,
+                    span.column,
                     &format!(
                         "forward declaration '{}' has different return type({:?}) than its implementation({:?})",
                         forward_dec.name.name,
                         forward_dec.return_type,
                         implementation.return_type
                     ),
-                ).with_suggestion("decide on one type!"));
+                    ).with_source_line(&self.get_source_line(span.line))
+                    .with_suggestion("decide on one type!"));
                     continue;
                 }
 
                 if forward_dec.parameters.len() != implementation.parameters.len() {
+                    let span = forward_dec.name.span;
                     self.errors.borrow_mut().push(
                         CompilerError::new(
                             ErrorType::TypeError,
-                            1,
-                            1,
+                            span.line,
+                            span.column,
                             &format!(
                         "forward declaration '{}' has different parameters than its implementation",
                         forward_dec.name.name
                     ),
-                        )
+                        ).with_source_line(&self.get_source_line(span.line))
                         .with_suggestion("you might want to reconsider your implementation"),
                     );
                     continue;
@@ -1226,16 +1230,23 @@ impl Parser {
                     .enumerate()
                 {
                     if dec_param.parameter_type != imp_param.parameter_type {
+                        let span = if dec_param.name.is_some() {
+                            dec_param.name.as_ref().unwrap().span
+                        } else {
+                            forward_dec.name.span
+                        };
                         self.errors.borrow_mut().push(CompilerError::new(
                             ErrorType::TypeError,
-                            1,
-                            1,
+                            span.line,
+                            span.column,
                             &format!(
                             "Parameter '{}' of '{}' has a different type than its implementation",
                             i + 1,
                             forward_dec.name.name
                         ),
-                        ));
+                        )
+                            .with_source_line(&self.get_source_line(span.line)));
+
                         continue;
                     }
                 }

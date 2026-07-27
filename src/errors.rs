@@ -59,7 +59,6 @@ impl CompilerError {
     }
 
     //TODO: how can we comeup with the best suggestions?
-    #[allow(dead_code)]
     pub fn with_suggestion(self, suggestion: &str) -> Self {
         CompilerError {
             suggestion: Some(suggestion.to_string()),
