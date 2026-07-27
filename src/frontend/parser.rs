@@ -1010,7 +1010,6 @@ impl Parser {
             | BinaryOperator::LessEqual => 3,
             BinaryOperator::Add | BinaryOperator::Subtract => 4,
             BinaryOperator::Multiply | BinaryOperator::Divide | BinaryOperator::Mod => 5,
-            //TODO: %
         }
     }
     /// returns a ref to the current token

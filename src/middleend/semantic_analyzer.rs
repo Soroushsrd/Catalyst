@@ -311,7 +311,6 @@ impl SemanticAnalyzer {
         unify(left, right) // ok_or_else(|| {
     }
 
-    // TODO: simplify!
     fn check_assignable(&self, target_type: &Types, value_type: &Types) -> Option<Types> {
         unify(target_type, value_type)
     }
