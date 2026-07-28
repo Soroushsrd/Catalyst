@@ -6,3 +6,18 @@ edition = "2024"
 [dependencies]
 clap = { version = "4.5.48", features = ["derive"] }
 inkwell = { version = "0.6.0", features = ["llvm18-1"] }
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+overflow-checks = true
+
+
+[profile.dev.package."*"]
+opt-level = 2
+
+[profile.profiling]
+inherits = "release"
+debug = true
+strip = "none"
