@@ -1,172 +1,95 @@
+# Catalyst
 
-# C Language Compiler
+A C compiler written in Rust, targeting native binaries through LLVM.
 
-A simple compiler written in Rust that uses LLVM to compile C code.
+Catalyst takes a single `.c` file, runs it through a hand written lexer, recursive descent parser, semantic analyzer, and LLVM IR code generator, then links the result with `clang` into an executable.
 
-## Features
+```bash
+echo 'int main() { return 42; }' > test.c
+cargo run -- test.c
+./test; echo $?   # 42
+```
 
-### Currently Supported ✓
+## Building
 
-#### Language Constructs
+Prerequisites:
 
-- [x] **Function definitions** with return types
-- [x] **Return statements** with optional expressions
-- [x] **Function parameters** (basic parameter parsing implemented)
-- [x] **Declarations and Assignments**
-- [x] **Block statements** with curly braces `{}`
-
-#### Data Types
-
-- [x] **Integers** (`int`)
-- [x] **Void** (`void`)
-- [x] **Char** (`char`)
-- [x] **Long** (`long`)
-- [x] **Double** (`double`)
-- [x] **Float** (`float`)
-
-#### Expressions
-
-- [x] **Arithmetic operations**: `+`, `-`, `*`, `/`
-- [x] **Unary operations**:
-  - [x] Unary minus (`-`)
-  - [x] Logical NOT (`!`)
-  - [x] Bitwise NOT (`~`)
-- [x] **Binary expressions** with proper operator precedence
-- [x] **Parenthesized expressions**
-- [x] **Variable references** (identifier lookup)
-- [x] **Numeric literals**
-- [x] **Ternary expressions**
-
-#### Comments
-
-- [x] **Single-line comments** (`//`)
-- [x] **Block comments** (`/* */`)
-
-#### Core Language Features
-
-- [x] **Variable declarations and assignments**
-- [x] **Local variable scoping**
-- [x] **Function calls with argument passing**
-- [x] **Multiple parameter support** (currently limited to 6 due to calling convention)
-- [x] **Global variable declaration**
-
-#### Control Flow
-
-- [x] **Conditional statements** (`if`/`else`)
-- [x] **Loops** (`while`, `for`,`continue`,`break`)
-- [x] **Comparison operators** (`==`, `!=`, `<`, `>`, `<=`, `>=`)
-- [x] **Logical operators** (`&&`, `||`)
-
-### Advanced Features
-
-- [ ] **Arrays and indexing**
-- [x] **Nested Blocks**
-- [x] **Pointer declaration(int *ptr)**
-- [x] **Address-of operator(&variable)**
-- [ ] **Dereference operator(*ptr)**
-- [ ] **Pointer arithmetic(ptr+1)**
-- [ ] **Pointer assignment(ptr = &x)**
-- [ ] **Address-of operator**
-- [ ] **Structures/records**
-- [ ] **String handling**
-- [ ] **Multiple source files**
-
-### Optimization & Tooling
-
-- [ ] **Basic optimizations** (constant folding, dead code elimination)
-- [x] **Better error messages** with line numbers and suggestions
-- [x] **Debugging information generation**
-- [x] **Standard library functions** (`printf`, etc.)
-
-### Language Extensions
-
-- [ ] **Type system improvements**
-- [ ] **Generic/template support**
-- [ ] **Module system**
-- [ ] **Memory management features**
-
-## Architecture
-
-The compiler follows a traditional three-phase design:
-
-### 1. Lexical Analysis (`lexer.rs`)
-
-- **Scanner** tokenizes the source code
-- Handles keywords, operators, identifiers, numbers, and strings
-- Supports both single-line and block comments
-- Implements "maximal munch" principle for token recognition
-
-### 2. Parsing (`parser.rs`)
-
-- **Recursive descent parser** builds an Abstract Syntax Tree (AST)
-- Implements operator precedence for binary expressions
-- Handles unary expressions and function definitions
-- Error reporting for syntax errors
-
-### 3. Code Generation (`semantic_analyzer.rs`)
-
-- **SemanticAnalyzer** analyzes the parsed AST semanticly
-- Checks for usage before declaration errors
-
-### 4. Code Generation (`code_generator.rs`)
-
-- **LLVMCodeGenerator** translates AST to llvm generated assembly
-- Follows System V ABI calling conventions
-- Manages stack frame allocation and variable storage
-- Generates complete executable assembly with proper prologue/epilogue
-
-## Usage
-
-### Prerequisites
-
-- Rust compiler
-- Clang
-- LLVM 18.1 (Just to compile Catalyst)
-- Polly (libpolly-18-dev)
-
-### Building and Running
-
-1. **Compile the compiler:**
+- Rust (edition 2024)
+- LLVM 18.1 development libraries
+- `libpolly-18-dev`
+- `clang` on `PATH` for linking
 
 ```bash
 cargo build --release
+./target/release/catalyst source.c            # writes ./source
+./target/release/catalyst source.c -o myprog  # writes ./myprog
 ```
 
-2. **Compile a source file:**
+## Supported language
 
-```bash
-./target/release/your_compiler_name source_file.c
-```
+### Types
 
-3. **Run the generated executable:**
+- `int`, `char`, `long`, `float`, `double`, `void`
+- Pointers of arbitrary depth: `int *p`, `char **pp`
+- Integer promotion by rank: `char < int < long`, integers promote into `float < double`
 
-```bash
-./source_file
-```
+### Declarations
 
-### Example Workflow
+- Local variables, with and without initializers (uninitialized locals are zeroed)
+- Global variables with constant initializers (integer or char literal), zeroed by default
+- Tentative globals: `int foo;` followed by `int foo = 3;` completes the declaration, two full definitions are an error
+- Functions with up to 6 parameters
+- Forward declarations, checked against their definition for return type, parameter count, and parameter types
+- Duplicate function definitions and name collisions between globals and functions are rejected
 
-```bash
-# Create a simple program
-echo 'int main() { return 42; }' > test.c
+### Statements
 
-# Compile it
-cargo run test.c
+- `{ }` blocks with nested scoping
+- `if` / `else`
+- `while`, `do ... while`, `for` (the `for` initializer gets its own scope)
+- `break` and `continue`, rejected at parse time outside a loop
+- `return` with or without a value
 
-# Run the generated executable
-./test
+### Expressions
 
-# Check the exit code
-echo $?  # Should output: 42
-```
+- Integer and floating literals, character literals (`'a'`, `'0'`)
+- Identifiers, function calls
+- Unary `-`, `!`, `~`, address-of `&`, dereference `*`
+- Binary `+ - * / %`, comparisons `== != < <= > >=`, logical `&& ||`
+- Ternary `cond ? a : b`
+- Assignment to a variable or through a pointer: `x = 1`, `*p = 1`
+
+### Code generation notes
+
+- `alloca` instructions are hoisted into the function entry block
+- `&&` and `||` short circuit with real branches and a `phi` merge
+- Ternaries compile to branches plus `phi`
+- Comparisons produce `i1`, zero extended to `i32`
+- Integer widths are coerced at three boundaries: binary operands, stores, and returns
+- Dereference picks its load type from the declared pointer type, so `**pp` works
+- Calls to functions Catalyst has never seen (`printf`, etc.) are implicitly declared as `i32 (i32, ...)` so they link against libc
+
+## Not supported yet
+
+Ranked by how much they are needed:
+
+1. **Arrays and indexing** — no `[]`, no aggregate types
+2. **Pointer arithmetic** — `p + 1` is rejected by the type checker
+3. **Float and double arithmetic** — the types parse, declare, and store, but binary operations assume integers
+4. **Compound and increment operators** — no `+=`, `++`, `--`
+5. **Bitwise binary operators** — `& | ^ << >>` are not parsed (only unary `~`)
+
+Also missing: `struct`, `union`, `enum`, `typedef`, string literals (lexed, never consumed), casts, `sizeof`, `switch`, `goto`, the preprocessor and `#include`, multiple translation units, `unsigned` and `short` qualifiers, and debug info.
+
+Known behavioral gaps:
+
+- Functions are hoisted, so any function can call any other regardless of source order. This is more permissive than C99.
+- Character literals accept only ASCII alphanumerics, so `'\n'` and `'+'` do not lex.
+- No check that a non-void function returns on every path; a function that falls off the end gets an implicit zero return.
+- `main`'s signature is not validated, only its existence.
 
 ## Contributing
 
-This is a learning project, but contributions are welcome! Areas that need attention:
+Highest value areas right now: arrays, pointer arithmetic, a float code generation path, and an actual test harness.
 
-1. **Parser improvements** - Better error recovery and reporting
-2. **Code generation** - More expression types and optimizations
-3. **Testing** - Comprehensive test suite for all components
-4. **Documentation** - Code comments and usage examples
-
-*This compiler is a work in progress and serves as an educational project for understanding compiler construction principles.*
+*Educational project, in active development.*
