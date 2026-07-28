@@ -52,7 +52,7 @@ fn run_files_in_dir(dir: &str) -> Result<(), Box<dyn Error>> {
             continue;
         }
         let expected_output = expected_from_source(&path);
-        run_case(&path, expected_output).unwrap();
+        run_case(&path, expected_output)?;
     }
     Ok(())
 }
@@ -132,5 +132,10 @@ mod tests {
     #[test]
     fn test_stage_ten_valid() {
         run_files_in_dir("tests/stage_10/valid").unwrap();
+    }
+
+    #[test]
+    fn test_stage_eleven_valid() {
+        run_files_in_dir("tests/stage_11/valid").unwrap();
     }
 }

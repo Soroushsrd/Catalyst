@@ -1,3 +1,4 @@
+// expected 3
 int main() {
   char a = 'm';
   int result = 0;
@@ -14,5 +15,5 @@ int main() {
     result = result + 1;
   }
 
-  return result; // expected: 3
+  return result;
 }

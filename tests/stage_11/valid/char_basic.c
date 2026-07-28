@@ -1,3 +1,4 @@
+// expected 65
 int main() {
   char a = 'A';
   char b = 'z';

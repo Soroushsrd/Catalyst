@@ -1,7 +1,7 @@
-
+// expected 42
 int main() {
-    int x = 42;
-    int *ptr = &x;
-    int y = *ptr;
-    return y;
+  int x = 42;
+  int *ptr = &x;
+  int y = *ptr;
+  return y;
 }

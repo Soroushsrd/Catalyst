@@ -109,6 +109,25 @@ impl<'ctx> LLVMCodeGenerator<'ctx> {
                     }
                     _ => return Err("char literal can only initialize a char global".to_string()),
                 },
+                Expression::AddressOf(inner) => match &inner.kind {
+                    Expression::Identifier(ident) => {
+                        if !matches!(global._type, Types::Pointer(_)) {
+                            return Err(format!(
+                                "cannot initialize non ptr global '{}' with an address",
+                                global.name.name
+                            ));
+                        }
+                        let target = self.global_vars
+                            .get(ident)
+                            .ok_or_else(|| format!("global {} initialized with address of {ident}, which isn't a global",global.name.name))?;
+                        target.as_pointer_value().into()
+                    }
+                    _ => {
+                        return Err(
+                            "'address-of' in a global initializer needs a global variable".into(),
+                        );
+                    }
+                },
                 _ => {
                     return Err(
                         "Global variable initializers must be constant expressions".to_string()

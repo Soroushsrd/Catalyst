@@ -707,6 +707,9 @@ impl Parser {
                 | TokenType::Float
                 | TokenType::Double
                 | TokenType::Char
+                | TokenType::Long
+                | TokenType::Short
+                | TokenType::Unsigned
         ) {
             return true;
         }

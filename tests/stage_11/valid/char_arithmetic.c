@@ -1,3 +1,4 @@
+// expected 25
 int main() {
   char a = 'A';
   int b = a + 1;  // i8 + i32, triggers coerce_to_same_int_type
@@ -6,5 +7,5 @@ int main() {
   int diff =
       'z' - 'a'; // two char literals in a binary expression, should be 25
 
-  return diff; // expected: 25
+  return diff;
 }

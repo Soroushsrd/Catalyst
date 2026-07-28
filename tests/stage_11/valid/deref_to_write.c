@@ -1,6 +1,7 @@
+// expected 20
 int main() {
-    int x = 10;
-    int *ptr = &x;
-    *ptr = 20;
-    return x;
+  int x = 10;
+  int *ptr = &x;
+  *ptr = 20;
+  return x;
 }
