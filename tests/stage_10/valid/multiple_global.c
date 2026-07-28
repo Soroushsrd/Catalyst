@@ -1,6 +1,5 @@
+// expected 12
 int a = 3;
 int b = 4;
 
-int main() {
-    return a * b;
-}
+int main() { return a * b; }

@@ -1,7 +1,4 @@
-int sub_3(int x, int y, int z) {
-    return x - y - z;
-}
+// expected 4
+int sub_3(int x, int y, int z) { return x - y - z; }
 
-int main() {
-    return sub_3(10, 4, 2);
-}
+int main() { return sub_3(10, 4, 2); }

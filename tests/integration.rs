@@ -98,4 +98,39 @@ mod tests {
     fn test_stage_four_valid() {
         run_files_in_dir("tests/stage_4/valid").unwrap();
     }
+
+    #[test]
+    fn test_stage_five_valid() {
+        run_files_in_dir("tests/stage_5/valid").unwrap();
+    }
+
+    #[test]
+    fn test_stage_six_valid_expr() {
+        run_files_in_dir("tests/stage_6/valid/expression").unwrap();
+    }
+
+    #[test]
+    fn test_stage_six_valid_stmt() {
+        run_files_in_dir("tests/stage_6/valid/statement").unwrap();
+    }
+
+    #[test]
+    fn test_stage_seven_valid() {
+        run_files_in_dir("tests/stage_7/valid").unwrap();
+    }
+
+    #[test]
+    fn test_stage_eight_valid() {
+        run_files_in_dir("tests/stage_8/valid").unwrap();
+    }
+
+    #[test]
+    fn test_stage_nine_valid() {
+        run_files_in_dir("tests/stage_9/valid").unwrap();
+    }
+
+    #[test]
+    fn test_stage_ten_valid() {
+        run_files_in_dir("tests/stage_10/valid").unwrap();
+    }
 }

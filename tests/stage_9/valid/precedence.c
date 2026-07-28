@@ -1,7 +1,4 @@
-int three() {
-    return 3;
-}
+// expected 0
+int three() { return 3; }
 
-int main() {
-    return !three();
-}
+int main() { return !three(); }

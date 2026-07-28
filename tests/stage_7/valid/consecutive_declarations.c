@@ -1,12 +1,13 @@
+// expected 3
 int main() {
-    int a = 0;
-    {
-        int b = 1;
-        a = b;
-    }
-    {
-        int b = 2;
-        a = a + b;
-    }
-    return a;
+  int a = 0;
+  {
+    int b = 1;
+    a = b;
+  }
+  {
+    int b = 2;
+    a = a + b;
+  }
+  return a;
 }

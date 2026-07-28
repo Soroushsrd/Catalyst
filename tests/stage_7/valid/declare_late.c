@@ -1,8 +1,9 @@
+// expected 3
 int main() {
-    int a = 2;
-    {
-        a = 3;
-        int a = 0;
-    }
-    return a;
+  int a = 2;
+  {
+    a = 3;
+    int a = 0;
+  }
+  return a;
 }

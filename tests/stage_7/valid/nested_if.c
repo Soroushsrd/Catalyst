@@ -1,15 +1,16 @@
+// expected 4
 int main() {
-    int a = 0;
-    if (a) {
-        int b = 2;
-        return b;
+  int a = 0;
+  if (a) {
+    int b = 2;
+    return b;
+  } else {
+    int c = 3;
+    if (a < c) {
+      return 4;
     } else {
-        int c = 3;
-        if (a < c) {
-            return 4;
-        } else {
-            return 5;
-        }
+      return 5;
     }
-    return a;
+  }
+  return a;
 }

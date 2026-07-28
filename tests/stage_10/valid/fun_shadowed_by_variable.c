@@ -1,3 +1,4 @@
+// expected 5
 int foo() { return 3; }
 
 int main() {
