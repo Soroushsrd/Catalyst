@@ -20,7 +20,7 @@
 use crate::{
     errors::{CompilerError, ErrorType, Span},
     expect_token,
-    frontend::lexer::{Token, TokenType},
+    frontend::lexer::{Num, Token, TokenType},
 };
 use std::cell::RefCell;
 
@@ -74,9 +74,17 @@ pub struct Parameter {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Types {
     Void,
+    /// short int. covers 'int', 'short int' and 'short' (signed)
     Int,
+    /// unsigned int
+    UInt,
+    /// long int. covers both 'long' and 'long int' (signed)
     Long,
+    // unsigned long
+    ULong,
+    // signed char. should be treated as u8
     Char,
+    UChar,
     Float,
     Double,
     Pointer(Box<Types>), //TODO: Numeric types should be seperated
@@ -141,7 +149,9 @@ pub enum Expression {
     #[default]
     Unknown,
     Identifier(String),
-    Number(f32),
+    Number {
+        value: Num,
+    },
     CharLiteral(char),
     BitwiseNot(Box<TypedExpr>),
     UnaryMinus(Box<TypedExpr>),
@@ -942,7 +952,12 @@ impl Parser {
         };
         let expression = match token.token_type() {
             // TODO: think of replacing f32 for numbers. probably needs expansion of Number type
-            TokenType::Number(value) => make_expr(Expression::Number(*value), span),
+            TokenType::Number { value } => make_expr(
+                Expression::Number {
+                    value: value.to_owned(),
+                },
+                span,
+            ),
             TokenType::CharLiteral(ch) => make_expr(Expression::CharLiteral(*ch), span),
             TokenType::Identifier(name) => {
                 // in case we run into a function

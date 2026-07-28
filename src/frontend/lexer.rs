@@ -220,6 +220,8 @@ impl Scanner {
             "long" => TokenType::Long,
             "double" => TokenType::Double,
             "float" => TokenType::Float,
+            "short" => TokenType::Short,
+            "unsigned" => TokenType::Unsigned,
             //TODO: Add pointer here
             // "&" => TokenType::And,
             "break" => TokenType::Break,
@@ -246,17 +248,27 @@ impl Scanner {
     /// after the dot, otherwise breaks
     /// then parses the captured string to f32
     fn handle_number(&mut self) {
+        let mut is_float = false;
         while self.peek().is_ascii_digit() {
             self.advance();
         }
         if self.peek() == '.' && self.peek_next().is_ascii_digit() {
+            is_float = true;
             self.advance();
             while self.peek().is_ascii_digit() {
                 self.advance();
             }
         }
         let text: String = self.chars[self.start..self.current].iter().collect();
-        self.add_token(TokenType::Number(text.parse::<f32>().unwrap_or(0.0)));
+        if is_float {
+            self.add_token(TokenType::Number {
+                value: Num::Float(text.parse::<f64>().unwrap_or(0.0)),
+            });
+        } else {
+            self.add_token(TokenType::Number {
+                value: Num::Int(text.parse::<u64>().unwrap_or(0)),
+            });
+        }
     }
     /// starts at " and advances until either reaches
     /// the end of buffer or the ending ". Captures everything
@@ -458,16 +470,20 @@ pub enum TokenType {
     // literals
     Identifier(String),
     String(String),
-    Number(f32),
+    Number { value: Num },
     Pointer(Box<Types>),
+
     //keywords
     Void,
     Int,
+    Short,
     Long,
+    Unsigned,
     Double,
     Float,
     Char,
     CharLiteral(char),
+
     And,
     Break,
     Continue,
@@ -488,6 +504,14 @@ pub enum TokenType {
     // err
     Error(String),
 }
+
+#[derive(Debug, Clone, PartialEq)]
+/// TODO: this needs a kind to account for 10L or 19.0f suffixes
+pub enum Num {
+    Int(u64),
+    Float(f64),
+}
+
 impl Display for TokenType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -516,10 +540,12 @@ impl Display for TokenType {
             Self::LessEqual => write!(f, "<="),
             Self::Identifier(text) => write!(f, "Identifier: {text}"),
             Self::String(text) => write!(f, "String: {text}"),
-            Self::Number(text) => write!(f, "Number: {text}"),
+            Self::Number { value } => write!(f, "Number: {value:?}"),
             Self::Pointer(value) => write!(f, "Pointer: {value:?}"),
             Self::BitwiseNot => write!(f, "~"),
             Self::Void => write!(f, "void"),
+            Self::Short => write!(f, "short"),
+            Self::Unsigned => write!(f, "unsigned"),
             Self::Int => write!(f, "int"),
             Self::Char => write!(f, "char"),
             Self::CharLiteral(c) => write!(f, "charliteral: {c};"),

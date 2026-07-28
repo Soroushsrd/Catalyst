@@ -1,6 +1,6 @@
 use crate::{
     errors::{CompilerError, ErrorType},
-    frontend::parser::*,
+    frontend::{lexer::Num, parser::*},
 };
 use std::collections::HashMap;
 
@@ -135,7 +135,10 @@ impl SemanticAnalyzer {
         let span = expr.span;
         let t = match &mut expr.kind {
             // TODO: a function to analyuze the type of the number here
-            Expression::Number(_) => Types::Int,
+            Expression::Number { value } => match value {
+                Num::Int(_) => Types::Int,
+                Num::Float(_) => Types::Float,
+            },
             Expression::CharLiteral(_) => Types::Char,
             Expression::Identifier(ident) => scope
                 .lookup_type(ident)
@@ -174,7 +177,6 @@ impl SemanticAnalyzer {
                                 ));
                             }
                         }
-                        // Types::Int
                     }
                     _ => match self.unify_arithmetic(&left_type, &right_type) {
                         Some(t) => t,
@@ -457,10 +459,13 @@ impl SemanticAnalyzer {
 fn numeric_rank(t: &Types) -> Option<u8> {
     match t {
         Types::Char => Some(0),
-        Types::Int => Some(1),
-        Types::Long => Some(2),
-        Types::Float => Some(3),
-        Types::Double => Some(4),
+        Types::UChar => Some(1),
+        Types::Int => Some(2),
+        Types::UInt => Some(3),
+        Types::Long => Some(4),
+        Types::ULong => Some(5),
+        Types::Float => Some(6),
+        Types::Double => Some(7),
         Types::Void | Types::Pointer(_) => None,
     }
 }

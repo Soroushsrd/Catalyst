@@ -8,6 +8,7 @@ use inkwell::types::BasicTypeEnum;
 use inkwell::values::{BasicValueEnum, FunctionValue, GlobalValue, IntValue};
 use inkwell::{AddressSpace, IntPredicate, OptimizationLevel};
 
+use crate::frontend::lexer::Num;
 use crate::frontend::parser::*;
 use std::collections::HashMap;
 use std::path::Path;
@@ -76,15 +77,37 @@ impl<'ctx> LLVMCodeGenerator<'ctx> {
         let global_var = self.module.add_global(llvm_type, None, &global.name.name);
 
         let initializer: BasicValueEnum = if let Some(init_expr) = &global.initializer {
+            let as_u64 = |num: &Num| -> u64 {
+                match num {
+                    Num::Int(v) => *v,
+                    Num::Float(v) => *v as u64,
+                }
+            };
+
+            let as_f64 = |num: &Num| -> f64 {
+                match num {
+                    Num::Int(v) => *v as f64,
+                    Num::Float(v) => *v,
+                }
+            };
             // For global variables, initializers must be constants
             match &init_expr.kind {
-                Expression::Number(val) => match &global._type {
-                    Types::Int => self.context.i32_type().const_int(*val as u64, false).into(),
-                    Types::Long => self.context.i64_type().const_int(*val as u64, false).into(),
-                    Types::Char => self.context.i8_type().const_int(*val as u64, false).into(),
-                    Types::Float => self.context.f32_type().const_float(*val as f64).into(),
-                    Types::Double => self.context.f64_type().const_float(*val as f64).into(),
+                Expression::Number { value: val } => match &global._type {
+                    Types::Int => self.context.i32_type().const_int(as_u64(val), false).into(),
+                    Types::UInt => self.context.i32_type().const_int(as_u64(val), false).into(),
+                    Types::Long => self.context.i64_type().const_int(as_u64(val), false).into(),
+                    Types::ULong => self.context.i64_type().const_int(as_u64(val), false).into(),
+                    Types::Char => self.context.i8_type().const_int(as_u64(val), false).into(),
+                    Types::UChar => self.context.i8_type().const_int(as_u64(val), false).into(),
+                    Types::Float => self.context.f32_type().const_float(as_f64(val)).into(),
+                    Types::Double => self.context.f64_type().const_float(as_f64(val)).into(),
                     _ => return Err("Unsupported global variable type".to_string()),
+                },
+                Expression::CharLiteral(ch) => match &global._type {
+                    Types::Char | Types::UChar => {
+                        self.context.i8_type().const_int(*ch as u64, false).into()
+                    }
+                    _ => return Err("char literal can only initialize a char global".to_string()),
                 },
                 _ => {
                     return Err(
@@ -604,11 +627,10 @@ impl<'ctx> LLVMCodeGenerator<'ctx> {
         expression: &TypedExpr,
     ) -> Result<BasicValueEnum<'ctx>, String> {
         match &expression.kind {
-            Expression::Number(value) => Ok(self
-                .context
-                .i32_type()
-                .const_int(*value as u64, false)
-                .into()),
+            Expression::Number { value } => match value {
+                Num::Int(v) => Ok(self.context.i32_type().const_int(*v as u64, false).into()),
+                Num::Float(v) => Ok(self.context.f64_type().const_float(*v).into()),
+            },
             Expression::Identifier(ident) => self.generate_identifier(ident),
             Expression::CharLiteral(ch) => {
                 Ok(self.context.i8_type().const_int(*ch as u64, false).into())
@@ -1080,9 +1102,9 @@ impl<'ctx> LLVMCodeGenerator<'ctx> {
 
     fn llvm_type_from_ast(&self, ast_type: &Types) -> Result<BasicTypeEnum<'ctx>, String> {
         match ast_type {
-            Types::Int => Ok(self.context.i32_type().into()),
-            Types::Char => Ok(self.context.i8_type().into()),
-            Types::Long => Ok(self.context.i64_type().into()),
+            Types::Int | Types::UInt => Ok(self.context.i32_type().into()),
+            Types::Char | Types::UChar => Ok(self.context.i8_type().into()),
+            Types::Long | Types::ULong => Ok(self.context.i64_type().into()),
             Types::Float => Ok(self.context.f32_type().into()),
             Types::Double => Ok(self.context.f64_type().into()),
             Types::Pointer(_inner) => Ok(self.context.ptr_type(AddressSpace::default()).into()),
@@ -1093,9 +1115,9 @@ impl<'ctx> LLVMCodeGenerator<'ctx> {
     /// used to map Types to llvm types. it will create zero values for each one of my types
     fn get_zero_value(&self, ast_type: &Types) -> Result<BasicValueEnum<'ctx>, String> {
         match ast_type {
-            Types::Int => Ok(self.context.i32_type().const_int(0, false).into()),
-            Types::Char => Ok(self.context.i8_type().const_int(0, false).into()),
-            Types::Long => Ok(self.context.i64_type().const_int(0, false).into()),
+            Types::Int | Types::UInt => Ok(self.context.i32_type().const_int(0, false).into()),
+            Types::Char | Types::UChar => Ok(self.context.i8_type().const_int(0, false).into()),
+            Types::Long | Types::ULong => Ok(self.context.i64_type().const_int(0, false).into()),
             Types::Float => Ok(self.context.f32_type().const_float(0.0).into()),
             Types::Double => Ok(self.context.f64_type().const_float(0.0).into()),
             Types::Pointer(_) => {
