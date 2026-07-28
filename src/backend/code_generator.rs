@@ -5,7 +5,7 @@ use inkwell::module::Module;
 use inkwell::targets::{CodeModel, FileType, RelocMode, Target, TargetMachine};
 use inkwell::types::BasicType;
 use inkwell::types::BasicTypeEnum;
-use inkwell::values::{BasicValueEnum, FunctionValue, GlobalValue, IntValue};
+use inkwell::values::{BasicValueEnum, FunctionValue, GlobalValue, IntValue, PointerValue};
 use inkwell::{AddressSpace, IntPredicate, OptimizationLevel};
 
 use crate::frontend::lexer::Num;
@@ -17,6 +17,12 @@ use std::path::Path;
 struct VariableInfo<'ctx> {
     pub value: BasicValueEnum<'ctx>,
     pub var_type: Types,
+}
+
+#[derive(Clone)]
+struct GlobalInfo<'ctx> {
+    pub value: GlobalValue<'ctx>,
+    pub global_type: Types,
 }
 
 pub struct LLVMCodeGenerator<'ctx> {
@@ -33,7 +39,7 @@ pub struct LLVMCodeGenerator<'ctx> {
     // current function being compiled
     current_function: Option<FunctionValue<'ctx>>,
     function_table: HashMap<String, FunctionValue<'ctx>>,
-    global_vars: HashMap<String, GlobalValue<'ctx>>,
+    global_vars: HashMap<String, GlobalInfo<'ctx>>,
 }
 
 impl<'ctx> LLVMCodeGenerator<'ctx> {
@@ -120,7 +126,7 @@ impl<'ctx> LLVMCodeGenerator<'ctx> {
                         let target = self.global_vars
                             .get(ident)
                             .ok_or_else(|| format!("global {} initialized with address of {ident}, which isn't a global",global.name.name))?;
-                        target.as_pointer_value().into()
+                        target.value.as_pointer_value().into()
                     }
                     _ => {
                         return Err(
@@ -141,9 +147,13 @@ impl<'ctx> LLVMCodeGenerator<'ctx> {
 
         global_var.set_initializer(&initializer);
 
-        // Store in our global variables map for lookup
-        self.global_vars
-            .insert(global.name.name.clone(), global_var);
+        self.global_vars.insert(
+            global.name.name.clone(),
+            GlobalInfo {
+                value: global_var,
+                global_type: global._type.clone(),
+            },
+        );
 
         Ok(())
     }
@@ -650,7 +660,9 @@ impl<'ctx> LLVMCodeGenerator<'ctx> {
                 Num::Int(v) => Ok(self.context.i32_type().const_int(*v as u64, false).into()),
                 Num::Float(v) => Ok(self.context.f64_type().const_float(*v).into()),
             },
-            Expression::Identifier(ident) => self.generate_identifier(ident),
+            Expression::Identifier(_) | Expression::Dereference(_) => {
+                self.generate_load(expression)
+            }
             Expression::CharLiteral(ch) => {
                 Ok(self.context.i8_type().const_int(*ch as u64, false).into())
             }
@@ -672,50 +684,7 @@ impl<'ctx> LLVMCodeGenerator<'ctx> {
                 false_expr,
             } => self.generate_ternary_op(condition, true_expr, false_expr),
             Expression::Unknown => Ok(self.context.i32_type().const_int(0, false).into()),
-            Expression::AddressOf(inner) => self.generate_address_of(inner),
-            Expression::Dereference(inner) => self.generate_dereference(inner),
-        }
-    }
-
-    fn generate_dereference(&mut self, expr: &TypedExpr) -> Result<BasicValueEnum<'ctx>, String> {
-        let load_type = self.get_deref_load_type(expr)?;
-        let ptr_value = self.generate_expressions(expr)?;
-        let ptr = ptr_value.into_pointer_value();
-
-        let loaded = self
-            .builder
-            .build_load(load_type, ptr, "deref")
-            .map_err(|e| format!("failed to dereference the pointer: {e}"))?;
-
-        Ok(loaded)
-    }
-    /// Determines what LLVM type to load when dereferencing an expression.
-    fn get_deref_load_type(&self, expr: &TypedExpr) -> Result<BasicTypeEnum<'ctx>, String> {
-        match &expr.type_ {
-            Some(Types::Pointer(inner)) => self.llvm_type_from_ast(inner),
-            Some(other) => Err(format!("cannot deref non pointer types: {other:?}")),
-            None => Err("dereference target has no resolved type".into()),
-        }
-    }
-
-    fn generate_address_of(&mut self, expr: &TypedExpr) -> Result<BasicValueEnum<'ctx>, String> {
-        match expr.kind {
-            Expression::Identifier(ref name) => {
-                // pointer to the variable (alloca or global)
-                if let Some(var_info) = self.lookup_variable(name) {
-                    // already a pointer
-                    return Ok(var_info.value);
-                }
-                if let Some(global_var) = self.global_vars.get(name) {
-                    return Ok(global_var.as_pointer_value().into());
-                }
-                Err(format!("Undefined variable: {}", name))
-            }
-            Expression::Dereference(ref inner) => {
-                // &(*ptr) = ptr, just evaluatin the pointer
-                self.generate_expressions(inner)
-            }
-            _ => Err("Cannot take address of non-lvalue".to_string()),
+            Expression::AddressOf(inner) => Ok(self.generate_lvalue(inner)?.into()),
         }
     }
 
@@ -925,35 +894,6 @@ impl<'ctx> LLVMCodeGenerator<'ctx> {
             }
         }
     }
-    /// semantic analysis ensures the identifier is declared
-    /// in here we focus on loading the correct LLVM value
-    fn generate_identifier(&mut self, ident: &str) -> Result<BasicValueEnum<'ctx>, String> {
-        if let Some(var_info) = self.lookup_variable(ident) {
-            let var_type = var_info.var_type.clone();
-            let ptr_value = var_info.value.into_pointer_value();
-            let llvm_type = self.llvm_type_from_ast(&var_type)?;
-
-            let loaded = self
-                .builder
-                .build_load(llvm_type, ptr_value, ident)
-                .map_err(|e| format!("failed to load variable: {e}"))?;
-            return Ok(loaded);
-        }
-        if let Some(global_var) = self.global_vars.get(ident) {
-            let global_ptr = global_var.as_pointer_value();
-            let global_type = global_var
-                .get_initializer()
-                .ok_or("global variable has no inititalizer")?
-                .get_type();
-
-            let loaded = self
-                .builder
-                .build_load(global_type, global_ptr, ident)
-                .map_err(|e| format!("failed to load global variable: {e}"))?;
-            return Ok(loaded);
-        }
-        Err(format!("undefined variable: {ident}"))
-    }
 
     fn generate_ternary_op(
         &mut self,
@@ -1042,43 +982,19 @@ impl<'ctx> LLVMCodeGenerator<'ctx> {
         }
     }
 
-    // TODO: handle pointer assignment in here
     fn generate_assignment(
         &mut self,
         target: &TypedExpr,
         value: &TypedExpr,
     ) -> Result<BasicValueEnum<'ctx>, String> {
         let val = self.generate_expressions(value)?;
-
-        match &target.kind {
-            Expression::Identifier(name) => {
-                if let Some(info) = self.lookup_variable(name) {
-                    let ptr = info.value.into_pointer_value();
-                    self.builder
-                        .build_store(ptr, val)
-                        .map_err(|e| format!("Failed to store: {e:?}"))?;
-                    return Ok(val);
-                }
-
-                if let Some(global_var) = self.global_vars.get(name) {
-                    let ptr = global_var.as_pointer_value();
-                    self.builder
-                        .build_store(ptr, val)
-                        .map_err(|e| format!("failed to store: {e:?}"))?;
-                    return Ok(val);
-                }
-                Err(format!("Undefined variable in assignment: {}", name))
-            }
-            Expression::Dereference(inner) => {
-                let ptr_value = self.generate_expressions(inner)?;
-                let ptr = ptr_value.into_pointer_value();
-                self.builder
-                    .build_store(ptr, val)
-                    .map_err(|e| format!("failed to store dereferenced pointer: {e}"))?;
-                Ok(val)
-            }
-            _ => Err("Invalid assignment target".to_string()),
-        }
+        let target_type = self.ast_type_of(target)?;
+        let val = self.coerce_for_store(val, &target_type)?;
+        let ptr = self.generate_lvalue(target)?;
+        self.builder
+            .build_store(ptr, val)
+            .map_err(|e| format!("failed to store: {e}"))?;
+        Ok(val)
     }
 
     fn generate_bitwise_not(&mut self, expr: &TypedExpr) -> Result<BasicValueEnum<'ctx>, String> {
@@ -1117,6 +1033,66 @@ impl<'ctx> LLVMCodeGenerator<'ctx> {
             .build_int_neg(val.into_int_value(), "neg")
             .map_err(|e| format!("failed to build neg: {e}"))?
             .into())
+    }
+
+    /// resolves an expr to the address of the storage it has named
+    /// never loads or stores. errs if expr is not an lvalue
+    fn generate_lvalue(&mut self, expr: &TypedExpr) -> Result<PointerValue<'ctx>, String> {
+        match &expr.kind {
+            Expression::Identifier(name) => {
+                if let Some(info) = self.lookup_variable(name) {
+                    return Ok(info.value.into_pointer_value());
+                }
+                if let Some(global) = self.global_vars.get(name) {
+                    return Ok(global.value.as_pointer_value());
+                }
+                Err(format!("undefined variable: {name}"))
+            }
+            Expression::Dereference(inner) => {
+                Ok(self.generate_expressions(inner)?.into_pointer_value())
+            }
+            other => Err(format!("expression is not an lvalue: {other:?}")),
+        }
+    }
+
+    /// reads the value at an lvalue. address + one load
+    fn generate_load(&mut self, expr: &TypedExpr) -> Result<BasicValueEnum<'ctx>, String> {
+        let load_type = self.llvm_type_of(expr)?;
+        let name = match &expr.kind {
+            Expression::Identifier(n) => n.as_str(),
+            _ => "deref",
+        };
+        let ptr = self.generate_lvalue(expr)?;
+        self.builder
+            .build_load(load_type, ptr, name)
+            .map_err(|e| format!("failed to load: {e}"))
+    }
+
+    fn lookup_var_type(&self, name: &str) -> Option<Types> {
+        for scope in self.scope_stack.iter().rev() {
+            if let Some(var) = scope.get(name) {
+                return Some(var.var_type.clone());
+            }
+        }
+        self.global_vars.get(name).map(|g| g.global_type.clone())
+    }
+
+    /// The C type of the storage that an expression names
+    /// for identifiers the declared type gets chose. for everything else
+    /// we use what the analyzer stamped
+    fn ast_type_of(&self, expr: &TypedExpr) -> Result<Types, String> {
+        if let Expression::Identifier(name) = &expr.kind
+            && let Some(var) = self.lookup_var_type(name)
+        {
+            return Ok(var);
+        }
+        expr.type_
+            .clone()
+            .ok_or_else(|| format!("expression has no resolved type: {:?}", expr.kind))
+    }
+
+    fn llvm_type_of(&self, expr: &TypedExpr) -> Result<BasicTypeEnum<'ctx>, String> {
+        self.llvm_type_from_ast(&self.ast_type_of(expr)?)
     }
 
     fn llvm_type_from_ast(&self, ast_type: &Types) -> Result<BasicTypeEnum<'ctx>, String> {
