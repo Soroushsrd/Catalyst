@@ -143,6 +143,17 @@ fn make_expr(kind: Expression, span: Span) -> TypedExpr {
     }
 }
 
+fn compound_assign_op(token: &TokenType) -> Option<BinaryOperator> {
+    match token {
+        TokenType::PlusEqual => Some(BinaryOperator::Add),
+        TokenType::MinusEqual => Some(BinaryOperator::Subtract),
+        TokenType::StarEqual => Some(BinaryOperator::Multiply),
+        TokenType::SlashEqual => Some(BinaryOperator::Divide),
+        TokenType::ModEqual => Some(BinaryOperator::Mod),
+        _ => None,
+    }
+}
+
 /// evaluates to a value and can be used as part of other expressions
 #[derive(Debug, Clone, Default)]
 pub enum Expression {
@@ -167,12 +178,21 @@ pub enum Expression {
         target: Box<TypedExpr>,
         value: Box<TypedExpr>,
     },
+    CompoundAssignment {
+        target: Box<TypedExpr>,
+        binary_op: BinaryOperator,
+        value: Box<TypedExpr>,
+    },
     // as in a ? 1 : 2;
     TernaryOP {
         condition: Box<TypedExpr>,
         true_expr: Box<TypedExpr>,
         false_expr: Box<TypedExpr>,
     },
+    PostDecrement(Box<TypedExpr>),
+    PreDecrement(Box<TypedExpr>),
+    PostIncrement(Box<TypedExpr>),
+    PreIncrement(Box<TypedExpr>),
     FunctionCall {
         name: String,
         // using expression instead of parameter struct
@@ -200,6 +220,11 @@ pub enum BinaryOperator {
     LessEqual,
     And,
     Or,
+    BitAnd,
+    BitOr,
+    BitXOr,
+    ShiftLeft,
+    ShiftRight,
 }
 
 #[derive(Debug, Clone)]
@@ -797,36 +822,54 @@ impl Parser {
         self.parse_assignment()
     }
 
-    /// handles assignment expressions such as int a = 1;
+    /// handles assignment expressions such as int a = 1 and a +=1 ;
     fn parse_assignment(&self) -> ParseResult<TypedExpr> {
         let expr = self.parse_ternary_operation()?;
 
         if self.check_token_type(&TokenType::Equal) {
             self.advance();
             let value = self.parse_assignment()?;
-
-            match &expr.kind {
-                Expression::Identifier(_) | Expression::Dereference(_) => {
-                    let span = expr.span.clone();
-                    Ok(make_expr(
-                        Expression::Assignment {
-                            target: Box::new(expr),
-                            value: Box::new(value),
-                        },
-                        span,
-                    ))
-                }
-                _ => Err(self.error(
-                    ErrorType::InvalidAssignment,
-                    "Invalid assignment target",
-                    Some("Can only assign to variables or dereferenced pointers"),
-                )),
-            }
-        } else {
-            Ok(expr)
+            return self.make_assignment(expr, None, value);
         }
+        let compound = self.peek().and_then(|c| compound_assign_op(c.token_type()));
+        if let Some(op) = compound {
+            self.advance();
+            let value = self.parse_assignment()?;
+            return self.make_assignment(expr, Some(op), value);
+        }
+        Ok(expr)
     }
 
+    fn make_assignment(
+        &self,
+        target: TypedExpr,
+        operator: Option<BinaryOperator>,
+        value: TypedExpr,
+    ) -> ParseResult<TypedExpr> {
+        if !matches!(
+            target.kind,
+            Expression::Identifier(_) | Expression::Dereference(_)
+        ) {
+            return Err(self.error(
+                ErrorType::InvalidAssignment,
+                "Invalid assignment target",
+                Some("Can only assign to variables or dereferenced pointers"),
+            ));
+        }
+        let span = target.span;
+        let kind = match operator {
+            Some(op) => Expression::CompoundAssignment {
+                target: Box::new(target),
+                binary_op: op,
+                value: Box::new(value),
+            },
+            None => Expression::Assignment {
+                target: Box::new(target),
+                value: Box::new(value),
+            },
+        };
+        Ok(make_expr(kind, span))
+    }
     /// firsts imposes the ~ or ! unary expressions
     /// then parses the binary operators
     /// and based on operator precedence,
@@ -849,6 +892,11 @@ impl Parser {
                 TokenType::GreaterEqual => BinaryOperator::GreaterEqual,
                 TokenType::Less => BinaryOperator::Less,
                 TokenType::LessEqual => BinaryOperator::LessEqual,
+                TokenType::BitwiseOr => BinaryOperator::BitOr,
+                TokenType::BitwiseXor => BinaryOperator::BitXOr,
+                TokenType::Ampersand => BinaryOperator::BitAnd,
+                TokenType::ShiftLeft => BinaryOperator::ShiftLeft,
+                TokenType::ShiftRight => BinaryOperator::ShiftRight,
                 _ => break,
             };
 
@@ -870,6 +918,23 @@ impl Parser {
             );
         }
         Ok(left)
+    }
+
+    fn parse_postfix_expression(&self) -> ParseResult<TypedExpr> {
+        let mut expr = self.parse_primary_expression()?;
+        loop {
+            let span = expr.span;
+            if self.check_token_type(&TokenType::PlusPlus) {
+                self.advance();
+                expr = make_expr(Expression::PostIncrement(Box::new(expr)), span);
+            } else if self.check_token_type(&TokenType::MinusMinus) {
+                self.advance();
+                expr = make_expr(Expression::PostDecrement(Box::new(expr)), span);
+            } else {
+                break;
+            }
+        }
+        Ok(expr)
     }
 
     /// parses ternary conditional expressions: condition ? true_expr : false_expr
@@ -898,7 +963,7 @@ impl Parser {
             Ok(condition)
         }
     }
-    /// parses unary expressions like ~, !, -
+    /// parses unary expressions like ~, !, -, and prefixes such as -- and ++
     fn parse_unary_expression(&self) -> ParseResult<TypedExpr> {
         let token = expect_token!(
             self,
@@ -935,7 +1000,17 @@ impl Parser {
                 let expr = self.parse_unary_expression()?;
                 Ok(make_expr(Expression::Dereference(Box::new(expr)), span))
             }
-            _ => self.parse_primary_expression(),
+            TokenType::PlusPlus => {
+                self.advance();
+                let expr = self.parse_unary_expression()?;
+                Ok(make_expr(Expression::PreIncrement(Box::new(expr)), span))
+            }
+            TokenType::MinusMinus => {
+                self.advance();
+                let expr = self.parse_unary_expression()?;
+                Ok(make_expr(Expression::PreDecrement(Box::new(expr)), span))
+            }
+            _ => self.parse_postfix_expression(),
         }
     }
 
@@ -1020,14 +1095,19 @@ impl Parser {
     /// "*" and "/" have the same and highest precendence
     fn get_precendece(&self, operator: &BinaryOperator) -> u8 {
         match operator {
-            BinaryOperator::Or | BinaryOperator::And => 1,
-            BinaryOperator::Equals | BinaryOperator::NotEquals => 2,
+            BinaryOperator::Or => 1,
+            BinaryOperator::And => 2,
+            BinaryOperator::BitOr => 3,
+            BinaryOperator::BitXOr => 4,
+            BinaryOperator::BitAnd => 5,
+            BinaryOperator::Equals | BinaryOperator::NotEquals => 6,
             BinaryOperator::Greater
             | BinaryOperator::GreaterEqual
             | BinaryOperator::Less
-            | BinaryOperator::LessEqual => 3,
-            BinaryOperator::Add | BinaryOperator::Subtract => 4,
-            BinaryOperator::Multiply | BinaryOperator::Divide | BinaryOperator::Mod => 5,
+            | BinaryOperator::LessEqual => 7,
+            BinaryOperator::ShiftLeft | BinaryOperator::ShiftRight => 8,
+            BinaryOperator::Add | BinaryOperator::Subtract => 9,
+            BinaryOperator::Multiply | BinaryOperator::Divide | BinaryOperator::Mod => 10,
         }
     }
     /// returns a ref to the current token
@@ -1087,6 +1167,7 @@ impl Parser {
             Err(self.error(ErrorType::MissingToken, error_msg, None))
         }
     }
+
     /// cursor based errors. other type of errors are returned as return values for each function that needs them
     fn error(
         &self,

@@ -152,6 +152,23 @@ impl SemanticAnalyzer {
                     .with_suggestion("Are you sure you defined the variable?"),
                 )?
                 .clone(),
+            Expression::CompoundAssignment {
+                target,
+                binary_op: _,
+                value,
+            } => {
+                let t_type = self.type_of(target, scope)?;
+                let v_type = self.type_of(value, scope)?;
+                if self.check_assignable(&t_type, &v_type).is_none() {
+                    return Err(CompilerError::new(
+                        ErrorType::TypeError,
+                        span.line,
+                        span.column,
+                        &format!("cannot assign {t_type:?} to {v_type:?}"),
+                    ));
+                }
+                t_type
+            }
             Expression::Binary {
                 left,
                 operator,
@@ -294,6 +311,10 @@ impl SemanticAnalyzer {
             Expression::BitwiseNot(tt) => self.type_of(tt, scope)?,
             Expression::LogicalNot(tt) => self.type_of(tt, scope)?,
             Expression::UnaryMinus(tt) => self.type_of(tt, scope)?,
+            Expression::PostDecrement(tt) => self.type_of(tt, scope)?,
+            Expression::PostIncrement(tt) => self.type_of(tt, scope)?,
+            Expression::PreDecrement(tt) => self.type_of(tt, scope)?,
+            Expression::PreIncrement(tt) => self.type_of(tt, scope)?,
             Expression::Unknown => {
                 return Err(CompilerError::new(
                     ErrorType::TypeError,

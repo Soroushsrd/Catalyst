@@ -667,9 +667,35 @@ impl<'ctx> LLVMCodeGenerator<'ctx> {
                 right,
             } => self.generate_binary_op(left, operator, right),
             Expression::UnaryMinus(expr) => self.generate_unary_minus(expr),
+            Expression::PostDecrement(expr) => self.generate_incdec(expr, false, false),
+            Expression::PostIncrement(expr) => self.generate_incdec(expr, true, false),
+            Expression::PreDecrement(expr) => self.generate_incdec(expr, false, true),
+            Expression::PreIncrement(expr) => self.generate_incdec(expr, true, true),
             Expression::LogicalNot(expr) => self.generate_logical_not(expr),
             Expression::BitwiseNot(expr) => self.generate_bitwise_not(expr),
             Expression::Assignment { target, value } => self.generate_assignment(target, value),
+            Expression::CompoundAssignment {
+                target,
+                binary_op,
+                value,
+            } => {
+                let target_type = self.ast_type_of(target)?;
+                let llvm_type = self.llvm_type_from_ast(&target_type)?;
+                let ptr = self.generate_lvalue(target)?;
+
+                let current = self
+                    .builder
+                    .build_load(llvm_type, ptr, "compound_load")
+                    .map_err(|e| format!("failed to load: {e}"))?;
+                let rhs = self.generate_expressions(value)?;
+                let (lv, rv) = self.coerce_to_int(current.into_int_value(), rhs.into_int_value());
+                let result = self.build_int_binop(binary_op, lv, rv)?;
+                let result = self.coerce_for_store(result, &target_type)?;
+                self.builder
+                    .build_store(ptr, result)
+                    .map_err(|e| format!("failed to store: {e}"))?;
+                Ok(result)
+            }
             Expression::FunctionCall { name, arguments } => {
                 self.generate_function_call(name, arguments)
             }
@@ -681,6 +707,35 @@ impl<'ctx> LLVMCodeGenerator<'ctx> {
             Expression::Unknown => Ok(self.context.i32_type().const_int(0, false).into()),
             Expression::AddressOf(inner) => Ok(self.generate_lvalue(inner)?.into()),
         }
+    }
+
+    fn generate_incdec(
+        &mut self,
+        expr: &TypedExpr,
+        increment: bool,
+        prefix: bool,
+    ) -> Result<BasicValueEnum<'ctx>, String> {
+        let ty = self.llvm_type_of(expr)?;
+        let ptr = self.generate_lvalue(expr)?;
+        let old = self
+            .builder
+            .build_load(ty, ptr, "incdec_old")
+            .map_err(|e| format!("failed to load: {e}"))?;
+        let old_int = old.into_int_value();
+        let one = old_int.get_type().const_int(1, false);
+
+        let new = if increment {
+            self.builder.build_int_add(old_int, one, "inc")
+        } else {
+            self.builder.build_int_sub(old_int, one, "dec")
+        }
+        .map_err(|e| format!("failed to build incdec: {e}"))?;
+
+        self.builder
+            .build_store(ptr, new)
+            .map_err(|e| format!("failed to store: {e}"))?;
+
+        Ok(if prefix { new.into() } else { old })
     }
 
     fn generate_binary_op(
@@ -792,100 +847,7 @@ impl<'ctx> LLVMCodeGenerator<'ctx> {
                 let (lv, rv) =
                     self.coerce_to_int(left_val.into_int_value(), right_val.into_int_value());
 
-                match operator {
-                    BinaryOperator::Add => Ok(self
-                        .builder
-                        .build_int_add(lv, rv, "add")
-                        .map_err(|e| format!("failed to build add: {e}"))?
-                        .into()),
-                    BinaryOperator::Subtract => Ok(self
-                        .builder
-                        .build_int_sub(lv, rv, "subtract")
-                        .map_err(|e| format!("failed to build subtract: {e}"))?
-                        .into()),
-                    BinaryOperator::Multiply => Ok(self
-                        .builder
-                        .build_int_mul(lv, rv, "multiply")
-                        .map_err(|e| format!("failed to build multiplication: {e}"))?
-                        .into()),
-                    BinaryOperator::Divide => Ok(self
-                        .builder
-                        .build_int_signed_div(lv, rv, "divide")
-                        .map_err(|e| format!("failed to build division: {e}"))?
-                        .into()),
-                    BinaryOperator::Mod => Ok(self
-                        .builder
-                        .build_int_signed_rem(lv, rv, "remainder")
-                        .map_err(|e| format!("failed to build remainder: {e}"))?
-                        .into()),
-                    BinaryOperator::Equals => {
-                        let ret = self
-                            .builder
-                            .build_int_compare(IntPredicate::EQ, lv, rv, "eq")
-                            .map_err(|e| format!("Failed to build equals: {:?}", e))?;
-                        let result = self
-                            .builder
-                            .build_int_z_extend(ret, self.context.i32_type(), "eq_into_int")
-                            .map_err(|e| format!("failed to extend boolean: {e}"))?;
-                        Ok(result.into())
-                    }
-                    BinaryOperator::NotEquals => {
-                        let ret = self
-                            .builder
-                            .build_int_compare(IntPredicate::NE, lv, rv, "ne")
-                            .map_err(|e| format!("Failed to build ne: {:?}", e))?;
-                        let result = self
-                            .builder
-                            .build_int_z_extend(ret, self.context.i32_type(), "ne_into_int")
-                            .map_err(|e| format!("failed to extend boolean: {e}"))?;
-                        Ok(result.into())
-                    }
-                    BinaryOperator::Less => {
-                        let ret = self
-                            .builder
-                            .build_int_compare(IntPredicate::SLT, lv, rv, "lt")
-                            .map_err(|e| format!("Failed to build Lt: {:?}", e))?;
-                        let result = self
-                            .builder
-                            .build_int_z_extend(ret, self.context.i32_type(), "lt_into_int")
-                            .map_err(|e| format!("failed to extend boolean: {e}"))?;
-                        Ok(result.into())
-                    }
-                    BinaryOperator::LessEqual => {
-                        let ret = self
-                            .builder
-                            .build_int_compare(IntPredicate::SLE, lv, rv, "le")
-                            .map_err(|e| format!("Failed to build LE: {:?}", e))?;
-                        let result = self
-                            .builder
-                            .build_int_z_extend(ret, self.context.i32_type(), "le_into_int")
-                            .map_err(|e| format!("failed to extend boolean: {e}"))?;
-                        Ok(result.into())
-                    }
-                    BinaryOperator::Greater => {
-                        let ret = self
-                            .builder
-                            .build_int_compare(IntPredicate::SGT, lv, rv, "gt")
-                            .map_err(|e| format!("Failed to build gt: {:?}", e))?;
-                        let result = self
-                            .builder
-                            .build_int_z_extend(ret, self.context.i32_type(), "gt_into_int")
-                            .map_err(|e| format!("failed to extend boolean: {e}"))?;
-                        Ok(result.into())
-                    }
-                    BinaryOperator::GreaterEqual => {
-                        let ret = self
-                            .builder
-                            .build_int_compare(IntPredicate::SGE, lv, rv, "ge")
-                            .map_err(|e| format!("Failed to build ge: {:?}", e))?;
-                        let result = self
-                            .builder
-                            .build_int_z_extend(ret, self.context.i32_type(), "ge_into_int")
-                            .map_err(|e| format!("failed to extend boolean: {e}"))?;
-                        Ok(result.into())
-                    }
-                    _ => unreachable!(),
-                }
+                self.build_int_binop(operator, lv, rv)
             }
         }
     }
@@ -1123,6 +1085,88 @@ impl<'ctx> LLVMCodeGenerator<'ctx> {
             )
             .map_err(|e| format!("failed to build compare: {e}"))
     }
+    fn build_int_binop(
+        &self,
+        op: &BinaryOperator,
+        lv: IntValue<'ctx>,
+        rv: IntValue<'ctx>,
+    ) -> Result<BasicValueEnum<'ctx>, String> {
+        // comparisons: build the icmp, then zero-extend i1 -> i32
+        let cmp = |pred: IntPredicate, name: &str, ext_name: &str| {
+            let ret = self
+                .builder
+                .build_int_compare(pred, lv, rv, name)
+                .map_err(|e| format!("failed to build {name}: {e}"))?;
+            self.builder
+                .build_int_z_extend(ret, self.context.i32_type(), ext_name)
+                .map_err(|e| format!("failed to extend boolean: {e}"))
+                .map(Into::into)
+        };
+
+        match op {
+            BinaryOperator::Add => Ok(self
+                .builder
+                .build_int_add(lv, rv, "add")
+                .map_err(|e| format!("failed to build add: {e}"))?
+                .into()),
+            BinaryOperator::Subtract => Ok(self
+                .builder
+                .build_int_sub(lv, rv, "subtract")
+                .map_err(|e| format!("failed to build subtract: {e}"))?
+                .into()),
+            BinaryOperator::Multiply => Ok(self
+                .builder
+                .build_int_mul(lv, rv, "multiply")
+                .map_err(|e| format!("failed to build multiplication: {e}"))?
+                .into()),
+            BinaryOperator::Divide => Ok(self
+                .builder
+                .build_int_signed_div(lv, rv, "divide")
+                .map_err(|e| format!("failed to build division: {e}"))?
+                .into()),
+            BinaryOperator::Mod => Ok(self
+                .builder
+                .build_int_signed_rem(lv, rv, "remainder")
+                .map_err(|e| format!("failed to build remainder: {e}"))?
+                .into()),
+
+            BinaryOperator::Equals => cmp(IntPredicate::EQ, "eq", "eq_into_int"),
+            BinaryOperator::NotEquals => cmp(IntPredicate::NE, "ne", "ne_into_int"),
+            BinaryOperator::Less => cmp(IntPredicate::SLT, "lt", "lt_into_int"),
+            BinaryOperator::LessEqual => cmp(IntPredicate::SLE, "le", "le_into_int"),
+            BinaryOperator::Greater => cmp(IntPredicate::SGT, "gt", "gt_into_int"),
+            BinaryOperator::GreaterEqual => cmp(IntPredicate::SGE, "ge", "ge_into_int"),
+            BinaryOperator::BitAnd => Ok(self
+                .builder
+                .build_and(lv, rv, "and")
+                .map_err(|e| format!("failed to build and: {e}"))?
+                .into()),
+            BinaryOperator::BitOr => Ok(self
+                .builder
+                .build_or(lv, rv, "or")
+                .map_err(|e| format!("failed to build or: {e}"))?
+                .into()),
+            BinaryOperator::BitXOr => Ok(self
+                .builder
+                .build_xor(lv, rv, "xor")
+                .map_err(|e| format!("failed to build xor: {e}"))?
+                .into()),
+            BinaryOperator::ShiftLeft => Ok(self
+                .builder
+                .build_left_shift(lv, rv, "shl")
+                .map_err(|e| format!("failed to build shl: {e}"))?
+                .into()),
+            BinaryOperator::ShiftRight => Ok(self
+                .builder
+                .build_right_shift(lv, rv, true, "shr")
+                .map_err(|e| format!("failed to build shr: {e}"))?
+                .into()),
+
+            BinaryOperator::And | BinaryOperator::Or => {
+                unreachable!("short-circuit ops are handled in generate_binary_op")
+            }
+        }
+    }
 
     /// each block has to have a terminator otherwise we could add an instruction after
     /// the block has been terminated. this method is used as a check for that
@@ -1191,9 +1235,11 @@ impl<'ctx> LLVMCodeGenerator<'ctx> {
             .map_err(|e| format!("failed to create object file: {e}"))?;
         Ok(())
     }
+
     pub fn print_ir(&self) {
         self.module.print_to_stderr();
     }
+
     /// helper func to truncate before storing
     fn coerce_for_store(
         &self,
@@ -1226,6 +1272,7 @@ impl<'ctx> LLVMCodeGenerator<'ctx> {
             _ => Ok(value),
         }
     }
+
     /// promotes to i32 or what ever type lhs and rhs have
     fn coerce_to_int(
         &self,
