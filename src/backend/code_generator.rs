@@ -5,7 +5,7 @@ use inkwell::module::Module;
 use inkwell::targets::{CodeModel, FileType, RelocMode, Target, TargetMachine};
 use inkwell::types::BasicType;
 use inkwell::types::BasicTypeEnum;
-use inkwell::values::{BasicValueEnum, FunctionValue, GlobalValue, IntValue, PointerValue};
+use inkwell::values::{BasicValueEnum, FunctionValue, IntValue, PointerValue};
 use inkwell::{AddressSpace, IntPredicate, OptimizationLevel};
 
 use crate::frontend::lexer::Num;
@@ -14,15 +14,9 @@ use std::collections::HashMap;
 use std::path::Path;
 
 #[derive(Clone)]
-struct VariableInfo<'ctx> {
-    pub value: BasicValueEnum<'ctx>,
-    pub var_type: Types,
-}
-
-#[derive(Clone)]
-struct GlobalInfo<'ctx> {
-    pub value: GlobalValue<'ctx>,
-    pub global_type: Types,
+struct Storage<'ctx> {
+    pub ptr: PointerValue<'ctx>,
+    pub _type: Types,
 }
 
 pub struct LLVMCodeGenerator<'ctx> {
@@ -31,7 +25,7 @@ pub struct LLVMCodeGenerator<'ctx> {
     pub builder: Builder<'ctx>,
     // a vec of symbol -> stack offset
     // used to keep track of symbol scopes
-    scope_stack: Vec<HashMap<String, VariableInfo<'ctx>>>,
+    scope_stack: Vec<HashMap<String, Storage<'ctx>>>,
     // to be used when we want to break out of a loop
     loop_exit_stack: Vec<BasicBlock<'ctx>>,
     // to be used when a continue keyword is used!
@@ -39,7 +33,7 @@ pub struct LLVMCodeGenerator<'ctx> {
     // current function being compiled
     current_function: Option<FunctionValue<'ctx>>,
     function_table: HashMap<String, FunctionValue<'ctx>>,
-    global_vars: HashMap<String, GlobalInfo<'ctx>>,
+    global_vars: HashMap<String, Storage<'ctx>>,
 }
 
 impl<'ctx> LLVMCodeGenerator<'ctx> {
@@ -126,7 +120,7 @@ impl<'ctx> LLVMCodeGenerator<'ctx> {
                         let target = self.global_vars
                             .get(ident)
                             .ok_or_else(|| format!("global {} initialized with address of {ident}, which isn't a global",global.name.name))?;
-                        target.value.as_pointer_value().into()
+                        target.ptr.into()
                     }
                     _ => {
                         return Err(
@@ -149,9 +143,9 @@ impl<'ctx> LLVMCodeGenerator<'ctx> {
 
         self.global_vars.insert(
             global.name.name.clone(),
-            GlobalInfo {
-                value: global_var,
-                global_type: global._type.clone(),
+            Storage {
+                ptr: global_var.as_pointer_value(),
+                _type: global._type.clone(),
             },
         );
 
@@ -160,6 +154,7 @@ impl<'ctx> LLVMCodeGenerator<'ctx> {
 
     fn declare_functions(&mut self, functions: &[Function]) -> Result<(), String> {
         for function in functions {
+            // TODO: unnamed parameters are skipped.Fix is a separate counter for the LLVM position
             let param_types: Result<Vec<BasicTypeEnum>, String> = function
                 .parameters
                 .iter()
@@ -223,9 +218,9 @@ impl<'ctx> LLVMCodeGenerator<'ctx> {
 
                 self.declare_variable(
                     &name.name,
-                    VariableInfo {
-                        value: alloca.into(),
-                        var_type: param.parameter_type.clone(),
+                    Storage {
+                        ptr: alloca,
+                        _type: param.parameter_type.clone(),
                     },
                 );
             }
@@ -514,9 +509,9 @@ impl<'ctx> LLVMCodeGenerator<'ctx> {
 
         self.declare_variable(
             &name.name,
-            VariableInfo {
-                value: alloca.into(),
-                var_type: var_type.clone(),
+            Storage {
+                ptr: alloca,
+                _type: var_type.clone(),
             },
         );
         Ok(())
@@ -1039,15 +1034,10 @@ impl<'ctx> LLVMCodeGenerator<'ctx> {
     /// never loads or stores. errs if expr is not an lvalue
     fn generate_lvalue(&mut self, expr: &TypedExpr) -> Result<PointerValue<'ctx>, String> {
         match &expr.kind {
-            Expression::Identifier(name) => {
-                if let Some(info) = self.lookup_variable(name) {
-                    return Ok(info.value.into_pointer_value());
-                }
-                if let Some(global) = self.global_vars.get(name) {
-                    return Ok(global.value.as_pointer_value());
-                }
-                Err(format!("undefined variable: {name}"))
-            }
+            Expression::Identifier(name) => self
+                .resolve(name)
+                .map(|s| s.ptr)
+                .ok_or_else(|| format!("undefined variable: {name}")),
             Expression::Dereference(inner) => {
                 Ok(self.generate_expressions(inner)?.into_pointer_value())
             }
@@ -1068,23 +1058,14 @@ impl<'ctx> LLVMCodeGenerator<'ctx> {
             .map_err(|e| format!("failed to load: {e}"))
     }
 
-    fn lookup_var_type(&self, name: &str) -> Option<Types> {
-        for scope in self.scope_stack.iter().rev() {
-            if let Some(var) = scope.get(name) {
-                return Some(var.var_type.clone());
-            }
-        }
-        self.global_vars.get(name).map(|g| g.global_type.clone())
-    }
-
     /// The C type of the storage that an expression names
     /// for identifiers the declared type gets chose. for everything else
     /// we use what the analyzer stamped
     fn ast_type_of(&self, expr: &TypedExpr) -> Result<Types, String> {
         if let Expression::Identifier(name) = &expr.kind
-            && let Some(var) = self.lookup_var_type(name)
+            && let Some(var) = self.resolve(name)
         {
-            return Ok(var);
+            return Ok(var._type.clone());
         }
         expr.type_
             .clone()
@@ -1174,16 +1155,15 @@ impl<'ctx> LLVMCodeGenerator<'ctx> {
     }
     /// semantic analysis has already validated that this variable exists
     /// we are using this lookup to get the LLVM value and type information
-    fn lookup_variable(&mut self, name: &str) -> Option<&VariableInfo<'ctx>> {
-        for scope in self.scope_stack.iter().rev() {
-            if let Some(var) = scope.get(name) {
-                return Some(var);
-            }
-        }
-        None
+    fn resolve(&self, name: &str) -> Option<&Storage<'ctx>> {
+        self.scope_stack
+            .iter()
+            .rev()
+            .find_map(|scope| scope.get(name))
+            .or_else(|| self.global_vars.get(name))
     }
 
-    fn declare_variable(&mut self, name: &str, var_info: VariableInfo<'ctx>) {
+    fn declare_variable(&mut self, name: &str, var_info: Storage<'ctx>) {
         if let Some(scope) = self.scope_stack.last_mut() {
             scope.insert(name.to_string(), var_info);
         }
