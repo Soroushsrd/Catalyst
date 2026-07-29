@@ -50,7 +50,7 @@ impl Scanner {
     /// start and current state of the scanner, captures
     /// different tokens
     pub fn scan_tokens(&mut self) -> Vec<Token> {
-        while self.current < self.source.len() {
+        while self.current < self.chars.len() {
             self.start = self.current;
             self.start_column = self.column;
             self.scan_token();
@@ -178,7 +178,7 @@ impl Scanner {
             '/' => {
                 if self.match_char('/') {
                     // single line comment. it will go on until \n
-                    while self.peek() != '\n' && !self.current >= self.chars.len() {
+                    while self.peek() != '\n' && self.current < self.chars.len() {
                         self.advance();
                     }
                 } else if self.match_char('*') {
@@ -217,17 +217,47 @@ impl Scanner {
     }
 
     fn handle_char_literals(&mut self) {
-        if self.peek().is_ascii_alphanumeric() {
-            let current_char = self.advance();
-            self.add_token(TokenType::CharLiteral(current_char));
-            self.advance(); // for ending '
-        } else {
+        let c = match self.peek() {
+            '\0' => {
+                self.add_error(ErrorType::SyntaxError, "unterminated char literal", None);
+                return;
+            }
+            '\\' => {
+                self.advance();
+                match self.advance() {
+                    'n' => '\n',
+                    't' => '\t',
+                    'r' => '\r',
+                    '0' => '\0',
+                    '\\' => '\\',
+                    '\'' => '\'',
+                    '"' => '"',
+                    other => {
+                        self.add_error(
+                            ErrorType::SyntaxError,
+                            &format!("unknown escape sequence: \\{other}"),
+                            Some("supported: \\n \\t \\r \\0 \\\\ \\' \\\""),
+                        );
+                        other
+                    }
+                }
+            }
+            ch => {
+                self.advance();
+                ch
+            }
+        };
+
+        if self.peek() != '\'' {
             self.add_error(
                 ErrorType::SyntaxError,
-                "need a ascii alphabetic char between quotes",
-                Some("make sure you're using an actuall character"),
+                "unterminated char literal",
+                Some("char literals hold exactly one character"),
             );
+            return;
         }
+        self.advance();
+        self.add_token(TokenType::CharLiteral(c));
     }
 
     /// used to parse out identifiers
@@ -307,7 +337,7 @@ impl Scanner {
     /// the end of buffer or the ending ". Captures everything
     /// in between and adds them as a token.
     fn handle_string(&mut self) {
-        while self.peek() != '"' && !self.current >= self.chars.len() {
+        while self.peek() != '"' && self.current < self.chars.len() {
             if self.peek() == '\n' {
                 self.line += 1;
             }
@@ -331,7 +361,7 @@ impl Scanner {
     /// starts at * after / of the comment block
     /// consumes tokens without saving them
     fn handle_block_comment(&mut self) {
-        while !self.current >= self.chars.len() {
+        while self.current < self.chars.len() {
             if self.peek() == '*' && self.peek_next() == '/' {
                 self.advance(); // for *
                 self.advance(); // then for /
