@@ -74,17 +74,54 @@ impl Scanner {
             // Single-character tokens
             '(' => self.add_token(TokenType::LeftParen),
             ')' => self.add_token(TokenType::RightParen),
+            '[' => self.add_token(TokenType::LeftBracket),
+            ']' => self.add_token(TokenType::RightBracket),
             '{' => self.add_token(TokenType::LeftBrace),
             '}' => self.add_token(TokenType::RightBrace),
             ',' => self.add_token(TokenType::Comma),
             '.' => self.add_token(TokenType::Dot),
-            '-' => self.add_token(TokenType::Minus),
-            '+' => self.add_token(TokenType::Plus),
+            '^' => self.add_token(TokenType::BitwiseXor),
+            '-' => {
+                let token_type = if self.match_char('-') {
+                    TokenType::MinusMinus
+                } else if self.match_char('=') {
+                    TokenType::MinusEqual
+                } else if self.match_char('>') {
+                    TokenType::Arrow
+                } else {
+                    TokenType::Minus
+                };
+                self.add_token(token_type)
+            }
+            '+' => {
+                let token_type = if self.match_char('+') {
+                    TokenType::PlusPlus
+                } else if self.match_char('=') {
+                    TokenType::PlusEqual
+                } else {
+                    TokenType::Plus
+                };
+                self.add_token(token_type)
+            }
             ';' => self.add_token(TokenType::Semicolon),
             ':' => self.add_token(TokenType::Colon),
             '?' => self.add_token(TokenType::QMark),
-            '%' => self.add_token(TokenType::Mod),
-            '*' => self.add_token(TokenType::Star),
+            '%' => {
+                let token_type = if self.match_char('=') {
+                    TokenType::ModEqual
+                } else {
+                    TokenType::Mod
+                };
+                self.add_token(token_type)
+            }
+            '*' => {
+                let token_type = if self.match_char('=') {
+                    TokenType::StarEqual
+                } else {
+                    TokenType::Star
+                };
+                self.add_token(token_type)
+            }
             '!' => {
                 let token_type = if self.match_char('=') {
                     TokenType::BangEqual
@@ -93,8 +130,6 @@ impl Scanner {
                 };
                 self.add_token(token_type);
             }
-            // TODO: pointers as references should also be handled at this point
-            // imagine something like a = &b;
             '&' => {
                 let token_type = if self.match_char('&') {
                     TokenType::And
@@ -107,13 +142,7 @@ impl Scanner {
                 let token_type = if self.match_char('|') {
                     TokenType::Or
                 } else {
-                    self.add_error(
-                        ErrorType::UnexpectedToken,
-                        &format!("Unexpected character {c}"),
-                        Some("comments start with //"),
-                    );
-
-                    TokenType::Error(format!("Unexpected character: {c}"))
+                    TokenType::BitwiseOr
                 };
                 self.add_token(token_type);
             }
@@ -129,6 +158,8 @@ impl Scanner {
             '<' => {
                 let token_type = if self.match_char('=') {
                     TokenType::LessEqual
+                } else if self.match_char('<') {
+                    TokenType::ShiftLeft
                 } else {
                     TokenType::Less
                 };
@@ -137,6 +168,8 @@ impl Scanner {
             '>' => {
                 let token_type = if self.match_char('=') {
                     TokenType::GreaterEqual
+                } else if self.match_char('>') {
+                    TokenType::ShiftRight
                 } else {
                     TokenType::Greater
                 };
@@ -150,8 +183,9 @@ impl Scanner {
                     }
                 } else if self.match_char('*') {
                     self.handle_block_comment();
+                } else if self.match_char('=') {
+                    self.add_token(TokenType::SlashEqual);
                 } else {
-                    // this is a simple division /
                     self.add_token(TokenType::Slash)
                 };
             }
@@ -184,7 +218,6 @@ impl Scanner {
 
     fn handle_char_literals(&mut self) {
         if self.peek().is_ascii_alphanumeric() {
-            println!("current char: {}", self.peek());
             let current_char = self.advance();
             self.add_token(TokenType::CharLiteral(current_char));
             self.advance(); // for ending '
@@ -444,6 +477,8 @@ pub enum TokenType {
     RightParen,
     LeftBrace,
     RightBrace,
+    LeftBracket,
+    RightBracket,
     Comma,
     Dot,
     Minus,
@@ -466,6 +501,18 @@ pub enum TokenType {
     Less,
     LessEqual,
     BitwiseNot,
+    BitwiseOr,
+    BitwiseXor,
+    ShiftLeft,
+    ShiftRight,
+    Arrow,
+    PlusPlus,
+    MinusMinus,
+    PlusEqual,
+    MinusEqual,
+    StarEqual,
+    SlashEqual,
+    ModEqual,
 
     // literals
     Identifier(String),
@@ -519,6 +566,8 @@ impl Display for TokenType {
             Self::RightParen => write!(f, ")"),
             Self::LeftBrace => write!(f, "'{{'"),
             Self::RightBrace => write!(f, "}}"),
+            Self::RightBracket => write!(f, "]"),
+            Self::LeftBracket => write!(f, "["),
             Self::Comma => write!(f, ","),
             Self::Dot => write!(f, "."),
             Self::Minus => write!(f, "-"),
@@ -543,6 +592,18 @@ impl Display for TokenType {
             Self::Number { value } => write!(f, "Number: {value:?}"),
             Self::Pointer(value) => write!(f, "Pointer: {value:?}"),
             Self::BitwiseNot => write!(f, "~"),
+            Self::BitwiseOr => write!(f, "|"),
+            Self::BitwiseXor => write!(f, "^"),
+            Self::ShiftLeft => write!(f, "<<"),
+            Self::ShiftRight => write!(f, ">>"),
+            Self::Arrow => write!(f, "->"),
+            Self::PlusPlus => write!(f, "++"),
+            Self::MinusMinus => write!(f, "--"),
+            Self::StarEqual => write!(f, "*="),
+            Self::ModEqual => write!(f, "%="),
+            Self::SlashEqual => write!(f, "/="),
+            Self::PlusEqual => write!(f, "+="),
+            Self::MinusEqual => write!(f, "-="),
             Self::Void => write!(f, "void"),
             Self::Short => write!(f, "short"),
             Self::Unsigned => write!(f, "unsigned"),
