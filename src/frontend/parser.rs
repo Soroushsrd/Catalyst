@@ -88,6 +88,7 @@ pub enum Types {
     Float,
     Double,
     Pointer(Box<Types>), //TODO: Numeric types should be seperated
+    Arrays(Box<Types>, Option<usize>),
 }
 
 /// performs an action but doesnt return a value
@@ -189,6 +190,8 @@ pub enum Expression {
         true_expr: Box<TypedExpr>,
         false_expr: Box<TypedExpr>,
     },
+    /// for array initializations
+    InitializerList(Vec<TypedExpr>),
     PostDecrement(Box<TypedExpr>),
     PreDecrement(Box<TypedExpr>),
     PostIncrement(Box<TypedExpr>),
@@ -325,9 +328,9 @@ impl Parser {
     }
 
     fn parse_top_decs(&mut self) -> ParseResult<TopLvlDecs> {
-        // let current_pos = *self.current.borrow();
-        let var_type = self.parse_type()?;
+        let base_type = self.parse_type()?;
         let name = self.parse_identifiers()?;
+        let var_type = self.parse_array_suffix(base_type)?;
         if self.check_token_type(&TokenType::LeftParen) {
             // then its a function dec and not a global variable
             self.consume_type(&TokenType::LeftParen, "Expected '(' after function name")?;
@@ -352,7 +355,7 @@ impl Parser {
         } else {
             let initializer = if self.check_token_type(&TokenType::Equal) {
                 self.advance();
-                Some(self.parse_expression()?)
+                Some(self.parse_initializer()?)
             } else {
                 None
             };
@@ -742,13 +745,15 @@ impl Parser {
     }
 
     /// parses statements such as int a; or int a = 2;
+    /// as well as int a[4] = {1,2,3,4};
     fn parse_var_declaration(&mut self) -> ParseResult<Statement> {
-        let var_type = self.parse_type()?;
+        let base_type = self.parse_type()?;
         let name = self.parse_identifiers()?;
+        let var_type = self.parse_array_suffix(base_type)?;
 
         let initializer = if self.check_token_type(&TokenType::Equal) {
             self.advance();
-            Some(self.parse_expression()?)
+            Some(self.parse_initializer()?)
         } else {
             None
         };
@@ -761,6 +766,29 @@ impl Parser {
         })
     }
 
+    /// handles both cases of normal variable initialization and array/struct
+    /// initializations
+    fn parse_initializer(&self) -> ParseResult<TypedExpr> {
+        if !self.check_token_type(&TokenType::LeftBrace) {
+            return self.parse_expression();
+        }
+
+        let span = self.with_current_span();
+        self.advance();
+        let mut values = Vec::new();
+        while !self.check_token_type(&TokenType::RightBrace) && !self.is_at_end() {
+            values.push(self.parse_initializer()?);
+            if !self.check_token_type(&TokenType::Comma) {
+                break;
+            }
+            self.advance();
+        }
+        self.consume_type(
+            &TokenType::RightBrace,
+            "expected '}' after initializer list",
+        )?;
+        Ok(make_expr(Expression::InitializerList(values), span))
+    }
     fn parse_continue_statement(&mut self) -> ParseResult<Statement> {
         if *self.loop_depth.borrow() == 0 {
             return Err(self.error(
@@ -935,6 +963,36 @@ impl Parser {
             }
         }
         Ok(expr)
+    }
+
+    /// parses int a[2][3] and creates Array(Array(int,3),2)
+    fn parse_array_suffix(&self, mut base: Types) -> ParseResult<Types> {
+        let mut dimension = Vec::with_capacity(2);
+        while self.check_token_type(&TokenType::LeftBracket) {
+            self.advance();
+            if self.check_token_type(&TokenType::RightBracket) {
+                self.advance();
+                dimension.push(None);
+                continue;
+            }
+            let size = match self.peek().map(|t| t.token_type()) {
+                Some(TokenType::Number { value: Num::Int(n) }) => *n as usize,
+                _ => {
+                    return Err(self.error(
+                        ErrorType::SyntaxError,
+                        "array size must be an integer constant",
+                        Some("use a literal, as in int a[5]"),
+                    ));
+                }
+            };
+            self.advance();
+            self.consume_type(&TokenType::RightBracket, "expected ]")?;
+            dimension.push(Some(size));
+        }
+        for dim in dimension.into_iter().rev() {
+            base = Types::Arrays(Box::new(base), dim);
+        }
+        Ok(base)
     }
 
     /// parses ternary conditional expressions: condition ? true_expr : false_expr
