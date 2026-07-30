@@ -77,63 +77,7 @@ impl<'ctx> LLVMCodeGenerator<'ctx> {
         let global_var = self.module.add_global(llvm_type, None, &global.name.name);
 
         let initializer: BasicValueEnum = if let Some(init_expr) = &global.initializer {
-            let as_u64 = |num: &Num| -> u64 {
-                match num {
-                    Num::Int(v) => *v,
-                    Num::Float(v) => *v as u64,
-                }
-            };
-
-            let as_f64 = |num: &Num| -> f64 {
-                match num {
-                    Num::Int(v) => *v as f64,
-                    Num::Float(v) => *v,
-                }
-            };
-            // For global variables, initializers must be constants
-            match &init_expr.kind {
-                Expression::Number { value: val } => match &global._type {
-                    Types::Int => self.context.i32_type().const_int(as_u64(val), false).into(),
-                    Types::UInt => self.context.i32_type().const_int(as_u64(val), false).into(),
-                    Types::Long => self.context.i64_type().const_int(as_u64(val), false).into(),
-                    Types::ULong => self.context.i64_type().const_int(as_u64(val), false).into(),
-                    Types::Char => self.context.i8_type().const_int(as_u64(val), false).into(),
-                    Types::UChar => self.context.i8_type().const_int(as_u64(val), false).into(),
-                    Types::Float => self.context.f32_type().const_float(as_f64(val)).into(),
-                    Types::Double => self.context.f64_type().const_float(as_f64(val)).into(),
-                    _ => return Err("Unsupported global variable type".to_string()),
-                },
-                Expression::CharLiteral(ch) => match &global._type {
-                    Types::Char | Types::UChar => {
-                        self.context.i8_type().const_int(*ch as u64, false).into()
-                    }
-                    _ => return Err("char literal can only initialize a char global".to_string()),
-                },
-                Expression::AddressOf(inner) => match &inner.kind {
-                    Expression::Identifier(ident) => {
-                        if !matches!(global._type, Types::Pointer(_)) {
-                            return Err(format!(
-                                "cannot initialize non ptr global '{}' with an address",
-                                global.name.name
-                            ));
-                        }
-                        let target = self.global_vars
-                            .get(ident)
-                            .ok_or_else(|| format!("global {} initialized with address of {ident}, which isn't a global",global.name.name))?;
-                        target.ptr.into()
-                    }
-                    _ => {
-                        return Err(
-                            "'address-of' in a global initializer needs a global variable".into(),
-                        );
-                    }
-                },
-                _ => {
-                    return Err(
-                        "Global variable initializers must be constant expressions".to_string()
-                    );
-                }
-            }
+            self.const_initializer(init_expr, &global._type)?
         } else {
             // Default zero initialization
             self.get_zero_value(&global._type)?
@@ -494,7 +438,43 @@ impl<'ctx> LLVMCodeGenerator<'ctx> {
         } else {
             return Err("No current function".to_string());
         };
-        if let Some(init_expr) = initializer {
+        if let (Some(init_expr), Types::Arrays(elem_type, _)) = (initializer, var_type)
+            && let Expression::InitializerList(values) = &init_expr.kind
+        {
+            // zero the whole thing out
+            let zero = self.get_zero_value(var_type)?;
+            self.builder
+                .build_store(alloca, zero)
+                .map_err(|e| format!("failed to zero array: {e}"))?;
+
+            // get arr type used for gep
+            let array_type = self.llvm_type_from_ast(var_type)?;
+            let i32_t = self.context.i32_type();
+
+            // for each element in array initializer, its address is computed
+            // through gep (get element ptr)
+            // getelementptr <ty>, ptr %base, <index0>, <index1>, ...
+            for (i, v) in values.iter().enumerate() {
+                let val = self.generate_expressions(v)?;
+                let val = self.coerce_for_store(val, elem_type)?;
+
+                // SAFETY: array sizes have already been checked at semantic level
+                let gep = unsafe {
+                    // alloca points at the array and i steps through it
+                    self.builder.build_in_bounds_gep(
+                        array_type,
+                        alloca,
+                        &[i32_t.const_int(0, false), i32_t.const_int(i as u64, false)],
+                        &format!("{}_elem{i}", name.name),
+                    )
+                }
+                .map_err(|e| format!("failed to build gep: {e}"))?;
+
+                self.builder
+                    .build_store(gep, val)
+                    .map_err(|e| format!("failed to store element: {e}"))?;
+            }
+        } else if let Some(init_expr) = initializer {
             let init_value = self.generate_expressions(init_expr)?;
             let init_value = self.coerce_for_store(init_value, var_type)?;
             self.builder
@@ -651,6 +631,9 @@ impl<'ctx> LLVMCodeGenerator<'ctx> {
         expression: &TypedExpr,
     ) -> Result<BasicValueEnum<'ctx>, String> {
         match &expression.kind {
+            Expression::InitializerList(..) => {
+                return Err("brace initializer in expression positions are not supported".into());
+            }
             Expression::Number { value } => match value {
                 Num::Int(v) => Ok(self.context.i32_type().const_int(*v as u64, false).into()),
                 Num::Float(v) => Ok(self.context.f64_type().const_float(*v).into()),
@@ -1046,6 +1029,11 @@ impl<'ctx> LLVMCodeGenerator<'ctx> {
             Types::Float => Ok(self.context.f32_type().into()),
             Types::Double => Ok(self.context.f64_type().into()),
             Types::Pointer(_inner) => Ok(self.context.ptr_type(AddressSpace::default()).into()),
+            Types::Arrays(inner, size) => {
+                let elem = self.llvm_type_from_ast(inner)?;
+                let n = size.ok_or("array size was never resolved")?;
+                Ok(elem.array_type(n as u32).into())
+            }
             Types::Void => Err("cannot create basic type for void".to_string()),
         }
     }
@@ -1062,6 +1050,11 @@ impl<'ctx> LLVMCodeGenerator<'ctx> {
                 let ptr_t = self.context.ptr_type(AddressSpace::default());
                 Ok(ptr_t.const_null().into())
             }
+            Types::Arrays(_, _) => Ok(self
+                .llvm_type_from_ast(ast_type)?
+                .into_array_type()
+                .const_zero()
+                .into()),
             Types::Void => Err("Cant create zero value for void".to_string()),
         }
     }
@@ -1167,7 +1160,99 @@ impl<'ctx> LLVMCodeGenerator<'ctx> {
             }
         }
     }
+    fn const_initializer(
+        &self,
+        expr: &TypedExpr,
+        ty: &Types,
+    ) -> Result<BasicValueEnum<'ctx>, String> {
+        let as_u64 = |num: &Num| match num {
+            Num::Int(v) => *v,
+            Num::Float(v) => *v as u64,
+        };
+        let as_f64 = |num: &Num| match num {
+            Num::Int(v) => *v as f64,
+            Num::Float(v) => *v,
+        };
 
+        match (&expr.kind, ty) {
+            (Expression::InitializerList(values), Types::Arrays(elem, size)) => {
+                let n = size.ok_or("array size was never resolved")?;
+                if values.len() > n {
+                    return Err(format!("too many initializers: array holds {n}"));
+                }
+                let mut elems = Vec::with_capacity(n);
+                for v in values {
+                    elems.push(self.const_initializer(v, elem)?);
+                }
+                let zero = self.get_zero_value(elem)?;
+                elems.resize(n, zero);
+                self.const_array_of(elem, &elems)
+            }
+            (Expression::InitializerList(_), _) => Err(format!(
+                "brace initializer used for non-array global: {ty:?}"
+            )),
+            (Expression::Number { value }, _) => Ok(match ty {
+                Types::Int | Types::UInt => self
+                    .context
+                    .i32_type()
+                    .const_int(as_u64(value), false)
+                    .into(),
+                Types::Long | Types::ULong => self
+                    .context
+                    .i64_type()
+                    .const_int(as_u64(value), false)
+                    .into(),
+                Types::Char | Types::UChar => self
+                    .context
+                    .i8_type()
+                    .const_int(as_u64(value), false)
+                    .into(),
+                Types::Float => self.context.f32_type().const_float(as_f64(value)).into(),
+                Types::Double => self.context.f64_type().const_float(as_f64(value)).into(),
+                _ => return Err(format!("cannot initialize {ty:?} with a numeric literal")),
+            }),
+            (Expression::CharLiteral(ch), Types::Char | Types::UChar) => {
+                Ok(self.context.i8_type().const_int(*ch as u64, false).into())
+            }
+            (Expression::AddressOf(inner), Types::Pointer(_)) => match &inner.kind {
+                Expression::Identifier(ident) => {
+                    let target = self
+                        .global_vars
+                        .get(ident)
+                        .ok_or_else(|| format!("address of '{ident}', which isn't a global"))?;
+                    Ok(target.ptr.into())
+                }
+                _ => Err("'address-of' in a global initializer needs a global variable".into()),
+            },
+            _ => Err("global variable initializers must be constant expressions".to_string()),
+        }
+    }
+
+    fn const_array_of(
+        &self,
+        elem_type: &Types,
+        values: &[BasicValueEnum<'ctx>],
+    ) -> Result<BasicValueEnum<'ctx>, String> {
+        Ok(match self.llvm_type_from_ast(elem_type)? {
+            BasicTypeEnum::IntType(t) => {
+                let vs: Vec<_> = values.iter().map(|v| v.into_int_value()).collect();
+                t.const_array(&vs).into()
+            }
+            BasicTypeEnum::FloatType(t) => {
+                let vs: Vec<_> = values.iter().map(|v| v.into_float_value()).collect();
+                t.const_array(&vs).into()
+            }
+            BasicTypeEnum::PointerType(t) => {
+                let vs: Vec<_> = values.iter().map(|v| v.into_pointer_value()).collect();
+                t.const_array(&vs).into()
+            }
+            BasicTypeEnum::ArrayType(t) => {
+                let vs: Vec<_> = values.iter().map(|v| v.into_array_value()).collect();
+                t.const_array(&vs).into()
+            }
+            _ => return Err(format!("unsupported array element type: {elem_type:?}")),
+        })
+    }
     /// each block has to have a terminator otherwise we could add an instruction after
     /// the block has been terminated. this method is used as a check for that
     fn current_block_terminator(&self) -> bool {
