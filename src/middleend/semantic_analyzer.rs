@@ -71,10 +71,14 @@ impl SemanticAnalyzer {
         let mut seen_globals: HashMap<String, Types> = HashMap::new();
         for global in program.global_vars.as_mut_slice() {
             if let Some(init) = global.initializer.as_mut() {
-                let local_scope = LocalScope::new(&seen_globals);
-                if let Err(e) = self.type_of(init, &local_scope) {
-                    self.errors.push(e);
+                if let Types::Arrays(_, size) = &mut global._type
+                    && size.is_none()
+                    && let Expression::InitializerList(values) = &init.kind
+                {
+                    *size = Some(values.len());
                 }
+                let local_scope = LocalScope::new(&seen_globals);
+                self.check_initializer(init, &global._type, &local_scope);
             }
             seen_globals.insert(global.name.name.clone(), global._type.clone());
         }
@@ -106,6 +110,60 @@ impl SemanticAnalyzer {
         }
     }
 
+    fn check_initializer(&mut self, init: &mut TypedExpr, expected: &Types, scope: &LocalScope) {
+        let span = init.span;
+        match (&mut init.kind, expected) {
+            (Expression::InitializerList(values), Types::Arrays(elem, size)) => {
+                if let Some(n) = size
+                    && values.len() > *n
+                {
+                    self.errors.push(CompilerError::new(
+                        ErrorType::TypeError,
+                        span.line,
+                        span.column,
+                        &format!(
+                            "too many initializers. array can hold {n} but got {}",
+                            values.len()
+                        ),
+                    ));
+                }
+                for v in values.iter_mut() {
+                    self.check_initializer(v, &elem, scope);
+                }
+                init.type_ = Some(expected.clone());
+            }
+            (Expression::InitializerList(_), _) => {
+                self.errors.push(CompilerError::new(
+                    ErrorType::TypeError,
+                    span.line,
+                    span.column,
+                    &format!("brace initialization was used for a non array type: {expected:?}"),
+                ));
+            }
+            (_, Types::Arrays(_, _)) => {
+                self.errors.push(CompilerError::new(
+                    ErrorType::TypeError,
+                    span.line,
+                    span.column,
+                    "an array must be initialized with braces",
+                ));
+            }
+            _ => match self.type_of(init, scope) {
+                Ok(t) => {
+                    if self.check_assignable(expected, &t).is_none() {
+                        self.errors.push(CompilerError::new(
+                            ErrorType::TypeError,
+                            span.line,
+                            span.column,
+                            &format!("type of {expected:?} doesnt match {t:?}"),
+                        ));
+                    }
+                }
+                Err(e) => self.errors.push(e),
+            },
+        }
+    }
+
     /// Computes the type of an expression, checking it for validity along the way.
     ///
     /// This is the core of the type checker. It's written as a single recursive
@@ -121,8 +179,6 @@ impl SemanticAnalyzer {
     ///   dropped here. This makes for example `long x = <big literal>` underchecked.
     /// - Ternary demands exact type equality instead of unifying the branches, so
     ///   `cond ? int_val : char_val` is rejected even though C would promote it.
-    /// - No line/column on any error. every `CompilerError` is hard coded to
-    ///   (1, 1) because expressions don't carry span info through the AST yet.
     /// - Pointer arithmetic and array/index typing are unhandled (`unify` refuses
     ///   to mix pointers with anything), so `ptr + 1` won't type check.
     /// - `LogicalNot`/`BitwiseNot` pass the operand type through unchanged rather
@@ -139,6 +195,14 @@ impl SemanticAnalyzer {
                 Num::Int(_) => Types::Int,
                 Num::Float(_) => Types::Float,
             },
+            Expression::InitializerList(..) => {
+                return Err(CompilerError::new(
+                    ErrorType::SyntaxError,
+                    span.line,
+                    span.column,
+                    "brace initialization isnt valid in expression position",
+                ));
+            }
             Expression::CharLiteral(_) => Types::Char,
             Expression::Identifier(ident) => scope
                 .lookup_type(ident)
@@ -396,21 +460,13 @@ impl SemanticAnalyzer {
                 var_type,
             } => {
                 if let Some(init) = initializer {
-                    // self.check_expr(init, local_scope );
-                    match self.type_of(init, local_scope) {
-                        Ok(init_ty) => match self.check_assignable(var_type, &init_ty) {
-                            Some(_) => {}
-                            None => {
-                                self.errors.push(CompilerError::new(
-                                    ErrorType::TypeError,
-                                    1,
-                                    1,
-                                    &format!("types of {var_type:?} and {init_ty:?} dont match"),
-                                ));
-                            }
-                        },
-                        Err(e) => self.errors.push(e),
+                    if let Types::Arrays(_, size) = var_type
+                        && size.is_none()
+                        && let Expression::InitializerList(values) = &init.kind
+                    {
+                        *size = Some(values.len());
                     }
+                    self.check_initializer(init, var_type, local_scope);
                 }
                 // Declare the variable AFTER checking its initializer
                 local_scope.declare_local(name.name.clone(), var_type.clone());
@@ -487,7 +543,7 @@ fn numeric_rank(t: &Types) -> Option<u8> {
         Types::ULong => Some(5),
         Types::Float => Some(6),
         Types::Double => Some(7),
-        Types::Void | Types::Pointer(_) => None,
+        Types::Void | Types::Pointer(_) | Types::Arrays(_, _) => None,
     }
 }
 /// The core promotion rule. Given two operand types, returns the single
