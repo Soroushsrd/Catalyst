@@ -3,6 +3,10 @@ name = "catalyst"
 version = "0.1.0"
 edition = "2024"
 
+[workspace]
+members = ["cpp"]
+resolver = "2"
+
 [dependencies]
 clap = { version = "4.5.48", features = ["derive"] }
 inkwell = { version = "0.6.0", features = ["llvm18-1"] }
