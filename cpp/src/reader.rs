@@ -53,7 +53,7 @@ impl<'a> Reader<'a> {
 
     pub fn peek_at(&self, n: usize) -> u8 {
         let mut p = self.bpos;
-        for i in 0..n {
+        for _ in 0..n {
             while let Some(l) = Self::ending_len(self.source, p) {
                 p += l;
             }
