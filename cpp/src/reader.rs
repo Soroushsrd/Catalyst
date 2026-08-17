@@ -1,5 +1,6 @@
 //! TODO: write a description. right now it just handles reading, splicing and CRLF
 
+#[derive(Clone)]
 pub struct Pos {
     line: usize,
     column: usize,
@@ -11,6 +12,7 @@ pub struct Reader<'a> {
     line: usize,
     column: usize,
     tab_stop: usize,
+    size_: usize,
 }
 
 impl<'a> Reader<'a> {
@@ -28,7 +30,16 @@ impl<'a> Reader<'a> {
             line: 1,
             column: 1,
             tab_stop: 8,
+            size_: bytes.len(),
         }
+    }
+
+    pub fn size(&self) -> usize {
+        self.size_
+    }
+
+    pub fn is_eof(&self) -> bool {
+        self.bpos >= self.size_
     }
 
     pub fn pos(&self) -> Pos {
