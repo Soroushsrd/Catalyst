@@ -55,11 +55,7 @@ impl<'a> Reader<'a> {
 
     /// returns the current byte
     pub fn peek(&self) -> u8 {
-        let mut pos = self.offset();
-        while let Some(n) = Self::ending_len(self.source, self.bpos) {
-            pos += n;
-        }
-        self.source.get(pos).copied().unwrap_or(0)
+        self.peek_at(0)
     }
 
     pub fn peek_at(&self, n: usize) -> u8 {

@@ -84,16 +84,16 @@ pub enum Punct {
     // arithmetic / bitwise / shift
     Slash,   // /
     Percent, // %
-    Shl,     //
+    Shl,     // <<
     Shr,     // >>
     Caret,   // ^
     Pipe,    // |
 
     // relational / equality
-    Lt,   //
+    Lt,   // <
     Gt,   // >
-    Le,   // <=
-    Ge,   // >=
+    Lte,  // <=
+    Gte,  // >=
     EqEq, // ==
     Ne,   // !=
 
@@ -147,24 +147,206 @@ impl<'a> Lexer<'a> {
         while !self.reader.is_eof() {
             self.scan_tokens();
         }
-        let pos = self.reader.pos();
-        let range = Range {
-            start: self.reader.offset(),
-            end: self.reader.size(),
-        };
-        self.push_token(PPToken {
-            kind: PPTokenType::EOF,
-            pos,
-            range,
-        });
-        self.tokens.to_vec()
+        let start_pos = self.pos();
+        let start_offset = self.reader.offset();
+        self.push_token(PPTokenType::EOF, start_offset, start_pos);
+        std::mem::take(&mut self.tokens)
     }
 
     fn scan_tokens(&mut self) {
+        let start_pos = self.pos();
+        let start_offset = self.reader.offset();
         let c = self.advance();
         match c {
-            b'[' => self.push_token(PPTokenType::Punc(Punct::LBracket), 1),
-            b']' => self.push_token(PPTokenType::Punc(Punct::RBracket), 1),
+            b'[' => self.push_token(PPTokenType::Punc(Punct::LBracket), start_offset, start_pos),
+            b']' => self.push_token(PPTokenType::Punc(Punct::RBracket), start_offset, start_pos),
+            b'(' => self.push_token(PPTokenType::Punc(Punct::LParen), start_offset, start_pos),
+            b')' => self.push_token(PPTokenType::Punc(Punct::RParen), start_offset, start_pos),
+            b'{' => self.push_token(PPTokenType::Punc(Punct::LBrace), start_offset, start_pos),
+            b'}' => self.push_token(PPTokenType::Punc(Punct::RBrace), start_offset, start_pos),
+            b'.' => {
+                if self.peek() == b'.' && self.peek_at(1) == b'.' {
+                    self.advance();
+                    self.advance();
+                    self.push_token(PPTokenType::Punc(Punct::Ellipsis), start_offset, start_pos);
+                } else {
+                    self.push_token(PPTokenType::Punc(Punct::Dot), start_offset, start_pos);
+                }
+            }
+            b'*' => {
+                if self.peek() == b'=' {
+                    self.advance();
+                    self.push_token(PPTokenType::Punc(Punct::StarEq), start_offset, start_pos);
+                } else {
+                    self.push_token(PPTokenType::Punc(Punct::Star), start_offset, start_pos);
+                }
+            }
+            b'+' => {
+                if self.peek() == b'=' {
+                    self.advance();
+                    self.push_token(PPTokenType::Punc(Punct::PlusEq), start_offset, start_pos);
+                } else if self.peek() == b'+' {
+                    self.advance();
+                    self.push_token(PPTokenType::Punc(Punct::PlusPlus), start_offset, start_pos);
+                } else {
+                    self.push_token(PPTokenType::Punc(Punct::Plus), start_offset, start_pos);
+                }
+            }
+            b'-' => {
+                if self.peek() == b'=' {
+                    self.advance();
+                    self.push_token(PPTokenType::Punc(Punct::MinusEq), start_offset, start_pos);
+                } else if self.peek() == b'-' {
+                    self.advance();
+                    self.push_token(
+                        PPTokenType::Punc(Punct::MinusMinus),
+                        start_offset,
+                        start_pos,
+                    );
+                } else if self.peek() == b'>' {
+                    self.advance();
+                    self.push_token(PPTokenType::Punc(Punct::Arrow), start_offset, start_pos);
+                } else {
+                    self.push_token(PPTokenType::Punc(Punct::Minus), start_offset, start_pos);
+                }
+            }
+            b'&' => {
+                if self.peek() == b'=' {
+                    self.advance();
+                    self.push_token(PPTokenType::Punc(Punct::AmpEq), start_offset, start_pos);
+                } else if self.peek() == b'&' {
+                    self.advance();
+                    self.push_token(PPTokenType::Punc(Punct::AmpAmp), start_offset, start_pos);
+                } else {
+                    self.push_token(PPTokenType::Punc(Punct::Amp), start_offset, start_pos);
+                }
+            }
+            b'~' => self.push_token(PPTokenType::Punc(Punct::Tilde), start_offset, start_pos),
+            b'!' => {
+                if self.peek() == b'=' {
+                    self.advance();
+                    self.push_token(PPTokenType::Punc(Punct::Ne), start_offset, start_pos);
+                } else {
+                    self.push_token(PPTokenType::Punc(Punct::Bang), start_offset, start_pos);
+                }
+            }
+            b'/' => {
+                if self.peek() == b'=' {
+                    self.advance();
+                    self.push_token(PPTokenType::Punc(Punct::SlashEq), start_offset, start_pos);
+                } else {
+                    self.push_token(PPTokenType::Punc(Punct::Slash), start_offset, start_pos);
+                }
+            }
+            b'%' => {
+                if self.peek() == b'=' {
+                    self.advance();
+                    self.push_token(PPTokenType::Punc(Punct::PercentEq), start_offset, start_pos);
+                } else if self.peek() == b':' {
+                    self.advance();
+                    if self.peek() == b'%' && self.peek_at(1) == b':' {
+                        self.advance();
+                        self.advance();
+                        self.push_token(
+                            PPTokenType::Punc(Punct::HashHash),
+                            start_offset,
+                            start_pos,
+                        );
+                    } else {
+                        self.push_token(PPTokenType::Punc(Punct::Hash), start_offset, start_pos);
+                    }
+                } else if self.peek() == b'>' {
+                    self.advance();
+                    self.push_token(PPTokenType::Punc(Punct::RBrace), start_offset, start_pos);
+                } else {
+                    self.push_token(PPTokenType::Punc(Punct::Percent), start_offset, start_pos);
+                }
+            }
+            b'<' => {
+                if self.peek() == b'<' {
+                    self.advance();
+                    if self.peek() == b'=' {
+                        self.advance();
+                        self.push_token(PPTokenType::Punc(Punct::ShlEq), start_offset, start_pos);
+                    } else {
+                        self.push_token(PPTokenType::Punc(Punct::Shl), start_offset, start_pos);
+                    }
+                } else if self.peek() == b':' {
+                    self.advance();
+                    self.push_token(PPTokenType::Punc(Punct::LBracket), start_offset, start_pos);
+                } else if self.peek() == b'%' {
+                    self.advance();
+                    self.push_token(PPTokenType::Punc(Punct::LBrace), start_offset, start_pos);
+                } else if self.peek() == b'=' {
+                    self.advance();
+                    self.push_token(PPTokenType::Punc(Punct::Lte), start_offset, start_pos);
+                } else {
+                    self.push_token(PPTokenType::Punc(Punct::Lt), start_offset, start_pos);
+                }
+            }
+            b'>' => {
+                if self.peek() == b'>' {
+                    self.advance();
+                    if self.peek() == b'=' {
+                        self.advance();
+                        self.push_token(PPTokenType::Punc(Punct::ShrEq), start_offset, start_pos);
+                    } else {
+                        self.push_token(PPTokenType::Punc(Punct::Shr), start_offset, start_pos);
+                    }
+                } else if self.peek() == b'=' {
+                    self.advance();
+                    self.push_token(PPTokenType::Punc(Punct::Gte), start_offset, start_pos);
+                } else {
+                    self.push_token(PPTokenType::Punc(Punct::Gt), start_offset, start_pos);
+                }
+            }
+            b'^' => {
+                if self.peek() == b'=' {
+                    self.advance();
+                    self.push_token(PPTokenType::Punc(Punct::CaretEq), start_offset, start_pos);
+                } else {
+                    self.push_token(PPTokenType::Punc(Punct::Caret), start_offset, start_pos);
+                }
+            }
+            b'|' => {
+                if self.peek() == b'=' {
+                    self.advance();
+                    self.push_token(PPTokenType::Punc(Punct::PipeEq), start_offset, start_pos);
+                } else if self.peek() == b'|' {
+                    self.advance();
+                    self.push_token(PPTokenType::Punc(Punct::PipePipe), start_offset, start_pos);
+                } else {
+                    self.push_token(PPTokenType::Punc(Punct::Pipe), start_offset, start_pos);
+                }
+            }
+            b'=' => {
+                if self.peek() == b'=' {
+                    self.advance();
+                    self.push_token(PPTokenType::Punc(Punct::EqEq), start_offset, start_pos);
+                } else {
+                    self.push_token(PPTokenType::Punc(Punct::Eq), start_offset, start_pos);
+                }
+            }
+            b'?' => self.push_token(PPTokenType::Punc(Punct::Question), start_offset, start_pos),
+            b':' => {
+                if self.peek() == b'>' {
+                    self.advance();
+                    self.push_token(PPTokenType::Punc(Punct::RBracket), start_offset, start_pos);
+                } else {
+                    self.push_token(PPTokenType::Punc(Punct::Colon), start_offset, start_pos);
+                }
+            }
+            b';' => self.push_token(PPTokenType::Punc(Punct::Semi), start_offset, start_pos),
+            b',' => self.push_token(PPTokenType::Punc(Punct::Comma), start_offset, start_pos),
+            b'#' => {
+                if self.peek() == b'#' {
+                    self.advance();
+                    self.push_token(PPTokenType::Punc(Punct::HashHash), start_offset, start_pos);
+                } else {
+                    self.push_token(PPTokenType::Punc(Punct::Hash), start_offset, start_pos);
+                }
+            }
+            _ => todo!("other pptokentypes are handled here"),
         }
     }
     fn lex_ident(&mut self) {}
@@ -172,22 +354,18 @@ impl<'a> Lexer<'a> {
     fn lex_str_lit(&mut self) {}
     fn lex_chr_lit(&mut self) {}
     fn lex_header(&mut self) {}
-    fn lex_punc(&mut self) {}
     fn lex_other(&mut self) {}
 
-    fn range(&self, token_length: usize) -> Range<usize> {
-        let start = self.reader.offset();
-        Range {
-            start,
-            end: start + token_length,
-        }
-    }
     fn pos(&self) -> Pos {
         self.reader.pos()
     }
-    fn push_token(&mut self, kind: PPTokenType, token_length: usize) {
-        let token = PPToken::new(kind, self.pos(), self.range(token_length));
-        self.tokens.push(token);
+    fn push_token(&mut self, kind: PPTokenType, start: usize, pos: Pos) {
+        let end = self.reader.offset();
+        self.tokens.push(PPToken {
+            kind,
+            pos,
+            range: start..end,
+        });
     }
 
     fn advance(&mut self) -> u8 {
