@@ -1,6 +1,5 @@
 //! TODO: write a description. right now it just handles reading, splicing and CRLF
 
-#[derive(Clone)]
 pub struct Pos {
     line: usize,
     column: usize,
@@ -60,14 +59,20 @@ impl<'a> Reader<'a> {
 
     pub fn peek_at(&self, n: usize) -> u8 {
         let mut p = self.bpos;
+        // A splice (`\` + newline) is invisible to the caller, so it can sit
+        // before *any* of the n+1 characters we step over, including the last.
+        // The loop below skips the splices in front of each of the first n
+        // characters. the trailing loop skips the ones in front of the character
+        // we actually return. Without the trailing loop, `"\<newline>a"` with
+        // n = 0 would return `\` instead of `a`.
         for _ in 0..n {
             while let Some(l) = Self::ending_len(self.source, p) {
                 p += l;
             }
-            if self.source.len() < p {
+            if p >= self.source.len() {
                 return 0;
             }
-            p += 1;
+            p += Self::char_width(self.source, p);
         }
         while let Some(l) = Self::ending_len(self.source, p) {
             p += l;
@@ -75,6 +80,14 @@ impl<'a> Reader<'a> {
         match self.source.get(p).copied().unwrap_or(0) {
             b'\r' => b'\n',
             c => c,
+        }
+    }
+
+    fn char_width(src: &[u8], p: usize) -> usize {
+        if src.get(p) == Some(&b'\r') && src.get(p + 1) == Some(&b'\n') {
+            2
+        } else {
+            1
         }
     }
 
@@ -131,5 +144,19 @@ impl<'a> Reader<'a> {
             }
             _ => None,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::reader::Reader;
+
+    #[test]
+    fn peek_at_counts_crlf_as_one() {
+        let r = Reader::new("a\r\nb");
+        assert_eq!(r.peek_at(0), b'a');
+        assert_eq!(r.peek_at(1), b'\n');
+        assert_eq!(r.peek_at(2), b'b');
+        assert_eq!(r.peek_at(3), 0);
     }
 }

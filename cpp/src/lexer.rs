@@ -7,7 +7,6 @@ use crate::{
 
 type PPResult<T> = Result<T, PreprocessorErr>;
 
-#[derive(Clone)]
 pub struct PPToken {
     pub kind: PPTokenType,
     pub pos: Pos,
