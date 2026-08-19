@@ -366,14 +366,30 @@ impl<'a> Lexer<'a> {
     fn lex_ident(&mut self) {}
     fn lex_number(&mut self) {}
     fn lex_str_lit(&mut self, start: usize, start_pos: Pos) {
-        // "
-        self.advance();
         while self.peek() != b'\"' && !self.reader.is_eof() {
-            self.advance();
+            let c = self.peek();
+            match c {
+                b'\n' => {
+                    self.errors.push(PreprocessorErr::new(
+                        ErrorType::NotStringLiteral,
+                        "Unterminated string literal",
+                    ));
+                    return;
+                }
+                b'\\' => {
+                    self.advance();
+                    if !self.reader.is_eof() {
+                        self.advance();
+                    }
+                }
+                _ => {
+                    self.advance();
+                }
+            }
         }
         if self.reader.is_eof() {
             self.errors.push(PreprocessorErr::new(
-                ErrorType::SyntaxError,
+                ErrorType::NotStringLiteral,
                 "Unterminated string literal",
             ));
             return;
@@ -382,21 +398,40 @@ impl<'a> Lexer<'a> {
         self.push_token(PPTokenType::StringLiteral, start, start_pos);
     }
     fn lex_chr_lit(&mut self, start: usize, start_pos: Pos) {
-        // '
-        self.advance();
         while self.peek() != b'\'' && !self.reader.is_eof() {
-            self.advance();
+            let c = self.peek();
+            match c {
+                b'\n' => {
+                    self.errors.push(PreprocessorErr::new(
+                        ErrorType::NotCharLiteral,
+                        "Unterminated char literal",
+                    ));
+                    self.push_token(PPTokenType::Other, start, start_pos);
+                    return;
+                }
+                b'\\' => {
+                    self.advance();
+                    if !self.reader.is_eof() {
+                        self.advance();
+                    }
+                }
+                _ => {
+                    self.advance();
+                }
+            }
         }
         if self.reader.is_eof() {
             self.errors.push(PreprocessorErr::new(
-                ErrorType::SyntaxError,
+                ErrorType::NotCharLiteral,
                 "Unterminated char literal",
             ));
+            self.push_token(PPTokenType::Other, start, start_pos);
             return;
         }
         self.advance();
         self.push_token(PPTokenType::CharLiteral, start, start_pos);
     }
+
     fn lex_header(&mut self) {}
     fn lex_other(&mut self) {}
 

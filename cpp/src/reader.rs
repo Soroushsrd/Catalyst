@@ -72,7 +72,10 @@ impl<'a> Reader<'a> {
         while let Some(l) = Self::ending_len(self.source, p) {
             p += l;
         }
-        self.source.get(p).copied().unwrap_or(0)
+        match self.source.get(p).copied().unwrap_or(0) {
+            b'\r' => b'\n',
+            c => c,
+        }
     }
 
     /// advances one step forward. consumes endings, folds CRLF into \n and tracks position
