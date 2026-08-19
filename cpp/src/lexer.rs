@@ -1,7 +1,7 @@
 use std::ops::Range;
 
 use crate::{
-    errors::PreprocessorErr,
+    errors::{ErrorType, PreprocessorErr},
     reader::{Pos, Reader},
 };
 
@@ -346,13 +346,57 @@ impl<'a> Lexer<'a> {
                     self.push_token(PPTokenType::Punc(Punct::Hash), start_offset, start_pos);
                 }
             }
-            _ => todo!("other pptokentypes are handled here"),
+            b'\'' => self.lex_chr_lit(start_offset, start_pos),
+            b'\"' => self.lex_str_lit(start_offset, start_pos),
+            _ => {
+                // if it starts with a '_' or alphabetic token
+                // use lex_ident()
+
+                // if it starts with a number
+                // use lex_number()
+
+                // if it starts with include,
+                // use lex_header()
+
+                // otherwise its 'other'
+            }
         }
     }
+
     fn lex_ident(&mut self) {}
     fn lex_number(&mut self) {}
-    fn lex_str_lit(&mut self) {}
-    fn lex_chr_lit(&mut self) {}
+    fn lex_str_lit(&mut self, start: usize, start_pos: Pos) {
+        // "
+        self.advance();
+        while self.peek() != b'\"' && !self.reader.is_eof() {
+            self.advance();
+        }
+        if self.reader.is_eof() {
+            self.errors.push(PreprocessorErr::new(
+                ErrorType::SyntaxError,
+                "Unterminated string literal",
+            ));
+            return;
+        }
+        self.advance();
+        self.push_token(PPTokenType::StringLiteral, start, start_pos);
+    }
+    fn lex_chr_lit(&mut self, start: usize, start_pos: Pos) {
+        // '
+        self.advance();
+        while self.peek() != b'\'' && !self.reader.is_eof() {
+            self.advance();
+        }
+        if self.reader.is_eof() {
+            self.errors.push(PreprocessorErr::new(
+                ErrorType::SyntaxError,
+                "Unterminated char literal",
+            ));
+            return;
+        }
+        self.advance();
+        self.push_token(PPTokenType::CharLiteral, start, start_pos);
+    }
     fn lex_header(&mut self) {}
     fn lex_other(&mut self) {}
 

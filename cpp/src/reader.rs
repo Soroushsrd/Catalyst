@@ -96,7 +96,7 @@ impl<'a> Reader<'a> {
                 return b'\n';
             }
             b'\t' => {
-                self.column = ((self.column - 1) / (self.tab_stop + 1)) * self.tab_stop + 1;
+                self.column = ((self.column - 1) / self.tab_stop + 1) * self.tab_stop + 1;
             }
             _ => self.column += 1,
         }
