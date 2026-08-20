@@ -141,7 +141,6 @@ impl<'a> Lexer<'a> {
     }
 
     /// a high level parser. should call underlying parsing mechanisms
-    /// TODO: need one parser per PPTokenType
     pub fn lex(&mut self) -> Vec<PPToken> {
         while !self.reader.is_eof() {
             self.scan_tokens();
@@ -168,6 +167,8 @@ impl<'a> Lexer<'a> {
                     self.advance();
                     self.advance();
                     self.push_token(PPTokenType::Punc(Punct::Ellipsis), start_offset, start_pos);
+                } else if self.peek().is_ascii_digit() {
+                    self.lex_number(start_offset, start_pos);
                 } else {
                     self.push_token(PPTokenType::Punc(Punct::Dot), start_offset, start_pos);
                 }
@@ -348,22 +349,47 @@ impl<'a> Lexer<'a> {
             b'\'' => self.lex_chr_lit(start_offset, start_pos),
             b'\"' => self.lex_str_lit(start_offset, start_pos),
             _ => {
-                // if it starts with a '_' or alphabetic token
-                // use lex_ident()
-
-                // if it starts with a number
-                // use lex_number()
-
-                // if it starts with include,
-                // use lex_header()
-
-                // otherwise its 'other'
+                if c.is_ascii_digit() {
+                    self.lex_number(start_offset, start_pos);
+                } else if c.is_ascii_alphabetic() || c == b'_' {
+                    self.lex_ident(start_offset, start_pos);
+                } else {
+                    self.push_token(PPTokenType::Other, start_offset, start_pos);
+                }
             }
         }
     }
 
-    fn lex_ident(&mut self) {}
-    fn lex_number(&mut self) {}
+    fn lex_ident(&mut self, start: usize, start_pos: Pos) {
+        // preprocessor accepts numbers in the middle of idents
+        while self.peek().is_ascii_alphanumeric() || self.peek() == b'_' {
+            self.advance();
+        }
+        self.push_token(PPTokenType::Ident, start, start_pos);
+    }
+
+    fn lex_number(&mut self, start: usize, start_pos: Pos) {
+        loop {
+            let c = self.peek();
+            match c {
+                b'e' | b'E' | b'p' | b'P' => {
+                    self.advance();
+                    if matches!(self.peek(), b'+' | b'-') {
+                        self.advance();
+                    }
+                }
+                b'.' | b'_' => {
+                    self.advance();
+                }
+                _ if c.is_ascii_alphanumeric() => {
+                    self.advance();
+                }
+                _ => break,
+            }
+        }
+        self.push_token(PPTokenType::Number, start, start_pos);
+    }
+
     fn lex_str_lit(&mut self, start: usize, start_pos: Pos) {
         while self.peek() != b'\"' && !self.reader.is_eof() {
             let c = self.peek();
