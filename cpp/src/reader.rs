@@ -1,8 +1,8 @@
 //! TODO: write a description. right now it just handles reading, splicing and CRLF
 
 pub struct Pos {
-    line: usize,
-    column: usize,
+    pub line: usize,
+    pub column: usize,
 }
 pub struct Reader<'a> {
     source: &'a [u8],
@@ -38,7 +38,11 @@ impl<'a> Reader<'a> {
     }
 
     pub fn is_eof(&self) -> bool {
-        self.bpos >= self.size_
+        let mut p = self.bpos;
+        while let Some(l) = Self::ending_len(self.source, p) {
+            p += l;
+        }
+        p >= self.size_
     }
 
     pub fn pos(&self) -> Pos {
