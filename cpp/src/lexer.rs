@@ -5,6 +5,7 @@ use crate::{
     reader::{Pos, Reader},
 };
 
+#[derive(Debug)]
 pub struct PPToken {
     pub kind: PPTokenType,
     pub pos: Pos,
@@ -13,7 +14,7 @@ pub struct PPToken {
 }
 
 /// What separated this token from the previous one.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub struct Gap {
     /// whitespace or a comment preceded this token
     pub ws_before: bool,
@@ -47,7 +48,7 @@ impl Default for Gap {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum PPTokenType {
     /// any sequence of letters, digits, or underscores
     /// which begin with _ or a letter
@@ -763,5 +764,30 @@ impl<'a> Lexer<'a> {
     }
     fn peek_at(&self, n: usize) -> u8 {
         self.reader.peek_at(n)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn test_lex_define() {
+        let define = r"#define A /*\n*/ 1";
+        let reader = Reader::new(define);
+        let mut lexer = Lexer::new(reader);
+        let tokens = lexer.lex();
+        println!("tokens: {:#?}", tokens);
+        assert_eq!(tokens.len(), 5);
+
+        assert_eq!(tokens[0].kind, PPTokenType::Punc(Punct::Hash));
+        assert_eq!(tokens[1].kind, PPTokenType::Ident);
+        assert_eq!(tokens[2].kind, PPTokenType::Ident);
+        assert_eq!(tokens[3].kind, PPTokenType::Number);
+        assert_eq!(tokens[4].kind, PPTokenType::EOF);
+
+        assert_eq!(tokens[1].range, 1..7);
+        assert_eq!(tokens[3].range, 17..18);
+
+        assert_eq!(lexer.reader.from_source(&tokens[3].range), "1");
     }
 }

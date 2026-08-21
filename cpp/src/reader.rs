@@ -1,5 +1,8 @@
 //! TODO: write a description. right now it just handles reading, splicing and CRLF
 
+use std::ops::Range;
+
+#[derive(Debug)]
 pub struct Pos {
     pub line: usize,
     pub column: usize,
@@ -31,6 +34,11 @@ impl<'a> Reader<'a> {
             tab_stop: 8,
             size_: bytes.len(),
         }
+    }
+
+    pub fn from_source(&self, range: &Range<usize>) -> &str {
+        let out = str::from_utf8(&self.source[range.start..range.end]).unwrap();
+        out
     }
 
     pub fn size(&self) -> usize {
