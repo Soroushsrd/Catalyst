@@ -1,4 +1,4 @@
-# cpp — a C preprocessor as a standalone crate
+# Genesis: a C preprocessor as a standalone crate
 
 Spec notes for what a C preprocessor is expected to do, and how GNU cpp (the reference
 implementation everybody is compared against) actually does it. Everything here is
