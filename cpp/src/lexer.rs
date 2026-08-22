@@ -186,8 +186,7 @@ impl<'a> Lexer<'a> {
             self.scan_tokens(gap);
             gap = Gap::default();
         }
-        let start_pos = self.pos();
-        let start_offset = self.reader.offset();
+        let (start_offset, start_pos) = self.reader.start_pos();
         self.push_token(PPTokenType::EOF, start_offset, start_pos, gap);
         std::mem::take(&mut self.tokens)
     }
@@ -248,8 +247,7 @@ impl<'a> Lexer<'a> {
     }
 
     fn scan_tokens(&mut self, gap: Gap) {
-        let start_pos = self.pos();
-        let start_offset = self.reader.offset();
+        let (start_offset, start_pos) = self.reader.start_pos();
         let c = self.advance();
         match c {
             b'[' => self.push_token(
@@ -742,10 +740,6 @@ impl<'a> Lexer<'a> {
         self.push_token(PPTokenType::CharLiteral, start, start_pos, gap);
     }
 
-    fn pos(&self) -> Pos {
-        self.reader.pos()
-    }
-
     fn push_token(&mut self, kind: PPTokenType, start: usize, pos: Pos, gap: Gap) {
         let end = self.reader.offset();
         self.tokens.push(PPToken {
@@ -789,5 +783,16 @@ mod tests {
         assert_eq!(tokens[3].range, 17..18);
 
         assert_eq!(lexer.reader.from_source(&tokens[3].range), "1");
+    }
+
+    #[test]
+    fn splice_before_token_does_not_widen_range() {
+        let r = Reader::new("a\\\n#b");
+        let mut lx = Lexer::new(r);
+        let toks = lx.lex();
+        let hash = &toks[1];
+        assert_eq!(hash.range, 3..4);
+        assert_eq!(hash.pos.line, 2);
+        assert_eq!(hash.pos.column, 1);
     }
 }

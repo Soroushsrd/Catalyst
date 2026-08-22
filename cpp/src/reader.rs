@@ -53,15 +53,19 @@ impl<'a> Reader<'a> {
         p >= self.size_
     }
 
-    pub fn pos(&self) -> Pos {
-        Pos {
-            line: self.line,
-            column: self.column,
-        }
-    }
-
     pub fn offset(&self) -> usize {
         self.bpos
+    }
+
+    pub fn start_pos(&mut self) -> (usize, Pos) {
+        self.eat_endings();
+        (
+            self.bpos,
+            Pos {
+                line: self.line,
+                column: self.column,
+            },
+        )
     }
 
     /// returns the current byte
